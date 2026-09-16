@@ -11,37 +11,48 @@ import (
 	"webcam-streamer/usecase"
 )
 
+// HTTPHandler управляет обработкой всех сетевых эндпоинтов приложения.
 type HTTPHandler struct {
 	uc *usecase.CameraUseCase
 }
 
-func NewHTTPHandler(uc *usecase.CameraUseCase) *HTTPHandler { return &HTTPHandler{uc: uc} }
+// NewHTTPHandler создает новый экземпляр HTTPHandler с внедренным сценарием использования.
+func NewHTTPHandler(uc *usecase.CameraUseCase) *HTTPHandler {
+	return &HTTPHandler{uc: uc}
+}
 
-// RegisterRoutes настраивает маршруты и возвращает handler с примененными middleware
+// RegisterRoutes связывает эндпоинты с методами обработки и оборачивает роутер в middleware логирования.
 func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) http.Handler {
 	mux.HandleFunc("/", h.HandleIndex)
 	mux.HandleFunc("/api/cameras", h.HandleCameras)
 	mux.HandleFunc("/stream", h.HandleStream)
+
 	return LoggingMiddleware(mux)
 }
 
+// HandleIndex отдает клиенту заглавную HTML-страницу интерфейса управления.
 func (h *HTTPHandler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, HTMLPage)
 }
 
+// HandleCameras возвращает список доступных видеоустройств сервера в формате JSON.
 func (h *HTTPHandler) HandleCameras(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	
 	cameras, err := h.uc.GetAvailableCameras(r.Context())
 	if err != nil {
 		http.Error(w, `{"error":"failed to get cameras"}`, http.StatusInternalServerError)
 		return
 	}
+	
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(cameras)
 }
 
+// HandleStream организует бесконечную многокомпонентную MJPEG-трансляцию кадров,
+// динамически подстраиваясь под переданные параметры w (ширина), h (высота) и fps.
 func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("dev")
 	if path == "" {
@@ -96,7 +107,8 @@ func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Хелпер для безопасного получения чисел из URL
+// getQueryInt извлекает из URL именованный целочисленный параметр,
+// возвращая дефолтное значение в случае отсутствия параметра или ошибки парсинга.
 func getQueryInt(r *http.Request, key string, defaultVal int) int {
 	valStr := r.URL.Query().Get(key)
 	if valStr == "" {

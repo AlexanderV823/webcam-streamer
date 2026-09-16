@@ -1,3 +1,4 @@
+// Главный пакет приложения, отвечающий за сборку и старт веб-сервера.
 package main
 
 import (
@@ -10,10 +11,13 @@ import (
 	"webcam-streamer/usecase"
 )
 
+// main выполняет сборку графа зависимостей (DI) и запускает прослушивание HTTP-порта.
 func main() {
 	cameraRepo := v4l2.NewV4L2Repository()
 	cameraStreamer := v4l2.NewV4L2Streamer()
+
 	cameraUC := usecase.NewCameraUseCase(cameraRepo, cameraStreamer)
+
 	httpHandler := delivery.NewHTTPHandler(cameraUC)
 
 	mux := http.NewServeMux()

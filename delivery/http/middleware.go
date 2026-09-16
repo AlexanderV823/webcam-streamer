@@ -1,3 +1,5 @@
+// Package http реализует веб-интерфейс приложения, обработку HTTP-маршрутов,
+// логирование входящих запросов и формирование MJPEG-потоков.
 package http
 
 import (
@@ -6,24 +8,27 @@ import (
 	"time"
 )
 
-// responseWriterInterceptor оборачивает http.ResponseWriter для перехвата HTTP-статуса
+// responseWriterInterceptor выступает в роли декоратора для стандартного http.ResponseWriter,
+// позволяя перехватывать и сохранять HTTP статус-код ответа для последующего логирования.
 type responseWriterInterceptor struct {
 	http.ResponseWriter
 	statusCode int
 }
 
-// NewResponseWriterInterceptor создает новую обертку с дефолтным статусом 200 OK
+// NewResponseWriterInterceptor инициализирует перехватчик с базовым успешным статусом 200 OK.
 func NewResponseWriterInterceptor(w http.ResponseWriter) *responseWriterInterceptor {
 	return &responseWriterInterceptor{w, http.StatusOK}
 }
 
-// WriteHeader перехватывает код ответа перед отправкой его клиенту
+// WriteHeader перехватывает запись HTTP-статуса и сохраняет его во внутреннее поле.
 func (rw *responseWriterInterceptor) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 }
 
-// LoggingMiddleware оборачивает http.Handler для логирования запросов, IP и HTTP-статусов
+// LoggingMiddleware является промежуточным слоем (Middleware), который вычисляет
+// реальный IP-адрес клиента за прокси-сервером Nginx, замеряет время выполнения запроса
+// и выводит структурированный лог в стандартный вывод.
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

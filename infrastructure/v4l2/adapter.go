@@ -1,3 +1,5 @@
+// Package v4l2 реализует интерфейсы слоя domain для операционных систем семейства Linux,
+// взаимодействуя напрямую с драйверами Video for Linux 2.
 package v4l2
 
 import (
@@ -10,10 +12,15 @@ import (
 	"github.com/vladimirvivien/go4vl"
 )
 
+// V4L2Repository реализует поиск видеоустройств в файловой системе Linux.
 type V4L2Repository struct{}
 
-func NewV4L2Repository() *V4L2Repository { return &V4L2Repository{} }
+// NewV4L2Repository создает новый экземпляр V4L2Repository.
+func NewV4L2Repository() *V4L2Repository {
+	return &V4L2Repository{}
+}
 
+// List сканирует директорию /dev/ по шаблону video* и формирует список доменных структур камер.
 func (r *V4L2Repository) List(ctx context.Context) ([]domain.Camera, error) {
 	matches, err := filepath.Glob("/dev/video*")
 	if err != nil {
@@ -32,10 +39,16 @@ func (r *V4L2Repository) List(ctx context.Context) ([]domain.Camera, error) {
 	return cameras, nil
 }
 
+// V4L2Streamer отвечает за открытие дескрипторов устройств и чтение видеобуфера ядра.
 type V4L2Streamer struct{}
 
-func NewV4L2Streamer() *V4L2Streamer { return &V4L2Streamer{} }
+// NewV4L2Streamer создает новый экземпляр V4L2Streamer.
+func NewV4L2Streamer() *V4L2Streamer {
+	return &V4L2Streamer{}
+}
 
+// Start открывает камеру через вызовы V4L2 в формате MJPEG, настраивает геометрию кадра,
+// FPS и запускает фоновую горутину для непрерывной прокачки кадров в канал передачи.
 func (s *V4L2Streamer) Start(ctx context.Context, path string, width, height, fps int) (<-chan []byte, <-chan error, error) {
 	// Инициализируем камеру с динамическим разрешением
 	cam, err := v4l2.Init(path, uint32(width), uint32(height), v4l2.MJPEG)
