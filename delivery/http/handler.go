@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"strconv"
 	"webcam-streamer/usecase"
 )
 
@@ -14,17 +15,13 @@ type HTTPHandler struct {
 	uc *usecase.CameraUseCase
 }
 
-func NewHTTPHandler(uc *usecase.CameraUseCase) *HTTPHandler {
-	return &HTTPHandler{uc: uc}
-}
+func NewHTTPHandler(uc *usecase.CameraUseCase) *HTTPHandler { return &HTTPHandler{uc: uc} }
 
 // RegisterRoutes настраивает маршруты и возвращает handler с примененными middleware
 func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) http.Handler {
 	mux.HandleFunc("/", h.HandleIndex)
 	mux.HandleFunc("/api/cameras", h.HandleCameras)
 	mux.HandleFunc("/stream", h.HandleStream)
-
-	// Оборачиваем весь mux в наш logging middleware
 	return LoggingMiddleware(mux)
 }
 
@@ -36,13 +33,11 @@ func (h *HTTPHandler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) HandleCameras(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
 	cameras, err := h.uc.GetAvailableCameras(r.Context())
 	if err != nil {
 		http.Error(w, `{"error":"failed to get cameras"}`, http.StatusInternalServerError)
 		return
 	}
-	
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(cameras)
 }
@@ -54,10 +49,15 @@ func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Парсинг параметров качества видео с дефолтными значениями
+	width := getQueryInt(r, "w", 640)
+	height := getQueryInt(r, "h", 480)
+	fps := getQueryInt(r, "fps", 30)
+
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	frameChan, errChan, err := h.uc.GetStream(ctx, path)
+	frameChan, errChan, err := h.uc.GetStream(ctx, path, width, height, fps)
 	if err != nil {
 		http.Error(w, "Failed to initialize stream: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -65,20 +65,14 @@ func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	mimeWriter := multipart.NewWriter(w)
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary="+mimeWriter.Boundary())
-	
-	// Отправляем 200 OK — стрим успешно запущен
 	w.WriteHeader(http.StatusOK)
 
 	for {
 		select {
 		case <-ctx.Done():
-			// Если клиент сам закрыл соединение, перехватчик может не зафиксировать кастомный код,
-			// но благодаря этому выходу middleware корректно посчитает время удержания стрима.
 			return
 		case err := <-errChan:
 			if err != nil {
-				// Если ошибка произошла посреди трансляции, мы просто прерываем цикл.
-				// Заголовки уже ушли, поэтому изменить HTTP-статус на 500 нельзя.
 				return
 			}
 		case frame, ok := <-frameChan:
@@ -96,8 +90,21 @@ func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if _, err := partWriter.Write(frame); err != nil {
-				return // Клиент отключился в процессе передачи кадра
+				return
 			}
 		}
 	}
+}
+
+// Хелпер для безопасного получения чисел из URL
+func getQueryInt(r *http.Request, key string, defaultVal int) int {
+	valStr := r.URL.Query().Get(key)
+	if valStr == "" {
+		return defaultVal
+	}
+	val, err := strconv.Atoi(valStr)
+	if err != nil {
+		return defaultVal
+	}
+	return val
 }

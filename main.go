@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 	"net/http"
+	"os"
 	delivery "webcam-streamer/delivery/http"
 	"webcam-streamer/infrastructure/v4l2"
 	"webcam-streamer/usecase"
@@ -27,7 +27,7 @@ func main() {
 
 	fmt.Printf("Легковесный стример запущен внутри контейнера на http://localhost:%s\n", port)
 	// Передаем handlerWithLogging вместо mux
-	if err := http.ListenAndServe(":"+port, handlerWithLogging); err != nil { 
+	if err := http.ListenAndServe(":"+port, handlerWithLogging); err != nil {
 		log.Fatalf("Ошибка сервера: %v", err)
 	}
 }

@@ -1,4 +1,3 @@
-// infrastructure/v4l2/adapter.go
 package v4l2
 
 import (
@@ -13,9 +12,7 @@ import (
 
 type V4L2Repository struct{}
 
-func NewV4L2Repository() *V4L2Repository {
-	return &V4L2Repository{}
-}
+func NewV4L2Repository() *V4L2Repository { return &V4L2Repository{} }
 
 func (r *V4L2Repository) List(ctx context.Context) ([]domain.Camera, error) {
 	matches, err := filepath.Glob("/dev/video*")
@@ -37,15 +34,20 @@ func (r *V4L2Repository) List(ctx context.Context) ([]domain.Camera, error) {
 
 type V4L2Streamer struct{}
 
-func NewV4L2Streamer() *V4L2Streamer {
-	return &V4L2Streamer{}
-}
+func NewV4L2Streamer() *V4L2Streamer { return &V4L2Streamer{} }
 
-func (s *V4L2Streamer) Start(ctx context.Context, path string) (<-chan []byte, <-chan error, error) {
-	// Инициализируем камеру (640x480, запрашиваем MJPEG формат)
-	cam, err := v4l2.Init(path, 640, 480, v4l2.MJPEG)
+func (s *V4L2Streamer) Start(ctx context.Context, path string, width, height, fps int) (<-chan []byte, <-chan error, error) {
+	// Инициализируем камеру с динамическим разрешением
+	cam, err := v4l2.Init(path, uint32(width), uint32(height), v4l2.MJPEG)
 	if err != nil {
 		return nil, nil, fmt.Errorf("v4l2 init failed: %w", err)
+	}
+
+	// Попытка принудительно выставить FPS
+	if err := cam.SetFps(uint32(fps)); err != nil {
+		// Некоторые дешевые камеры выбрасывают ошибку, если не поддерживают смену FPS.
+		// Логируем, но не прерываем работу.
+		fmt.Printf("⚠️ Предупреждение: Камера не поддерживает установку FPS %d: %v\n", fps, err)
 	}
 
 	if err := cam.Start(); err != nil {

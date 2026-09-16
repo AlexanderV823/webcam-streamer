@@ -3,9 +3,9 @@ package domain
 import "context"
 
 type Camera struct {
-	ID   string `json:"id"`   // Например: "video0"
-	Path string `json:"path"` // Например: "/dev/video0"
-	Name string `json:"name"` // Читаемое имя
+	ID   string `json:"id"`
+	Path string `json:"path"`
+	Name string `json:"name"`
 }
 
 // CameraRepository описывает, как мы ищем камеры в системе
@@ -15,5 +15,5 @@ type CameraRepository interface {
 
 // CameraStreamer описывает интерфейс захвата потока
 type CameraStreamer interface {
-	Start(ctx context.Context, path string) (<-chan []byte, <-chan error, error)
+	Start(ctx context.Context, path string, width, height, fps int) (<-chan []byte, <-chan error, error)
 }

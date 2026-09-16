@@ -19,9 +19,9 @@ func (uc *CameraUseCase) GetAvailableCameras(ctx context.Context) ([]domain.Came
 	return uc.repo.List(ctx)
 }
 
-func (uc *CameraUseCase) GetStream(ctx context.Context, path string) (<-chan []byte, <-chan error, error) {
+func (uc *CameraUseCase) GetStream(ctx context.Context, path string, width, height, fps int) (<-chan []byte, <-chan error, error) {
 	if path == "" {
 		return nil, nil, errors.New("camera path cannot be empty")
 	}
-	return uc.streamer.Start(ctx, path)
+	return uc.streamer.Start(ctx, path, width, height, fps)
 }
