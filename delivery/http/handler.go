@@ -30,16 +30,20 @@ func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) http.Handler {
 
 func (h *HTTPHandler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, HTMLPage) // Переменная HTMLPage вынесена в файл views.go
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, HTMLPage)
 }
 
 func (h *HTTPHandler) HandleCameras(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	
 	cameras, err := h.uc.GetAvailableCameras(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, `{"error":"failed to get cameras"}`, http.StatusInternalServerError)
 		return
 	}
+	
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(cameras)
 }
 
@@ -50,7 +54,6 @@ func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Связываем контекст HTTP-запроса (когда клиент закроет вкладку, контекст отменится)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -62,13 +65,20 @@ func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	mimeWriter := multipart.NewWriter(w)
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary="+mimeWriter.Boundary())
+	
+	// Отправляем 200 OK — стрим успешно запущен
+	w.WriteHeader(http.StatusOK)
 
 	for {
 		select {
 		case <-ctx.Done():
+			// Если клиент сам закрыл соединение, перехватчик может не зафиксировать кастомный код,
+			// но благодаря этому выходу middleware корректно посчитает время удержания стрима.
 			return
 		case err := <-errChan:
 			if err != nil {
+				// Если ошибка произошла посреди трансляции, мы просто прерываем цикл.
+				// Заголовки уже ушли, поэтому изменить HTTP-статус на 500 нельзя.
 				return
 			}
 		case frame, ok := <-frameChan:
@@ -86,7 +96,7 @@ func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if _, err := partWriter.Write(frame); err != nil {
-				return // Клиент отключился
+				return // Клиент отключился в процессе передачи кадра
 			}
 		}
 	}
