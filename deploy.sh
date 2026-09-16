@@ -3,7 +3,7 @@
 # Выход при любой ошибке
 set -e
 
-echo "=== Деплой Go Streamer + Nginx + Let's Encrypt ==="
+echo "=== Деплой Go Streamer + Nginx + Basic Auth ==="
 
 # 1. Проверка прав суперпользователя (для генерации SSL и работы с Docker)
 if [ "$EUID" -ne 0 ]; then
@@ -11,12 +11,20 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# 1. Создание .env из примера
+# 1. Создание и интерактивное редактирование .env
 if [ ! -f ".env" ]; then
-  echo "📝 Создание файла .env..."
+  echo "📝 Файл .env не найден. Создаю его из примера..."
   cp .env.example .env
-  echo "⚠️ Внимание: отредактируйте файл .env, указав свой реальный DOMAIN_NAME, затем запустите скрипт снова."
-  exit 0
+  
+  echo "⚙️ Открываю текстовый редактор nano..."
+  echo "👉 Задайте значения для DOMAIN_NAME, AUTH_USER и AUTH_PASSWORD."
+  echo "👉 Для сохранения нажмите Ctrl+O, затем Enter. Для выхода: Ctrl+X."
+  sleep 3 # Небольшая пауза, чтобы пользователь успел прочитать подсказку
+  
+  # Открываем nano напрямую в текущей сессии терминала
+  nano .env
+  
+  echo "✅ Файл .env сохранен. Продолжаю процесс развертывания..."
 fi
 
 # Загружаем переменные из .env
@@ -27,16 +35,28 @@ if [ "$DOMAIN_NAME" == "localhost" ] || [ -z "$DOMAIN_NAME" ]; then
   exit 1
 fi
 
-# 2. Подстановка домена в nginx.conf
+if [ -z "$AUTH_USER" ] || [ -z "$AUTH_PASSWORD" ]; then
+  echo "❌ Ошибка: AUTH_USER или AUTH_PASSWORD не могут быть пустыми в .env!"
+  exit 1
+fi
+
+# 2. Генерация файла .htpasswd средствами openssl
+echo "🔐 Генерация файла паролей .htpasswd для пользователя: $AUTH_USER..."
+# Форматируем пароль по стандарту веб-серверов с использованием алгоритма crypt
+BCRYPT_PASSWORD=$(openssl passwd -crypt "$AUTH_PASSWORD")
+echo "${AUTH_USER}:${BCRYPT_PASSWORD}" > .htpasswd
+chmod 644 .htpasswd
+
+# 3. Подстановка домена в nginx.conf
 echo "⚙️ Настройка конфигурации Nginx под домен $DOMAIN_NAME..."
 sed -i "s/server_name .*/server_name $DOMAIN_NAME;/g" nginx.conf
 sed -i "s|/live/[^/]*/|/live/$DOMAIN_NAME/|g" nginx.conf
 
-# 3. Первый запуск Nginx для прохождения проверки Certbot
+# 4. Первый запуск Nginx для прохождения проверки Certbot
 echo "🏗 Запуск временного Nginx для выпуска сертификата..."
 docker compose up -d nginx
 
-# 4. Запрос сертификата Let's Encrypt
+# 5. Запрос сертификата Let's Encrypt
 if [ ! -d "./certbot/conf/live/$DOMAIN_NAME" ]; then
   echo "🔐 Запрос SSL сертификата у Let's Encrypt для $DOMAIN_NAME..."
   docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
@@ -46,12 +66,13 @@ else
   echo "🔐 Сертификаты Let's Encrypt уже существуют."
 fi
 
-# 5. Полный перезапуск всей инфраструктуры
+# 6. Полный перезапуск всей инфраструктуры
 echo "🚀 Перезапуск всех сервисов в боевом режиме..."
 docker compose down
 docker compose up --build -d
 
 echo "======================================================="
 echo "✅ Инфраструктура успешно развернута!"
-echo "📺 Защищенный стрим доступен по адресу: https://$DOMAIN_NAME"
+echo "📺 Стрим защищен Basic Auth и доступен по адресу: https://$DOMAIN_NAME"
+echo "👤 Логин: $AUTH_USER"
 echo "======================================================="
