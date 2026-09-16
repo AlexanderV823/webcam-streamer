@@ -16,20 +16,20 @@ while true; do
   if [ ! -f ".env" ]; then
     echo "📝 Файл .env не найден. Создаю его из примера..."
     cp .env.example .env
-    
+
     echo "⚙️ Открываю текстовый редактор nano..."
     echo "👉 Задайте значения для DOMAIN_NAME, AUTH_USER и AUTH_PASSWORD."
     echo "👉 Для сохранения нажмите Ctrl+O, затем Enter. Для выхода: Ctrl+X."
     sleep 3
-    
+
     nano .env
   fi
 
   echo "🔍 Проверяю корректность заполнения .env..."
-  
+
   # Временный сброс переменных сессии перед проверкой
   unset DOMAIN_NAME AUTH_USER AUTH_PASSWORD CERTBOT_EMAIL APP_PORT LOG_MAX_SIZE LOG_MAX_FILES
-  
+
   # Читаем свежие переменные
   export $(grep -v '^#' .env | xargs)
 
@@ -69,12 +69,19 @@ while true; do
   fi
 done
 
-# 2. Генерация файла .htpasswd средствами openssl
+# 2. Генерация файла паролей .htpasswd с использованием стойкого алгоритма Bcrypt
 echo "🔐 Генерация файла паролей .htpasswd для пользователя: $AUTH_USER..."
-# Форматируем пароль по стандарту веб-серверов с использованием алгоритма crypt
-BCRYPT_PASSWORD=$(openssl passwd -crypt "$AUTH_PASSWORD")
-echo "${AUTH_USER}:${BCRYPT_PASSWORD}" > .htpasswd
+
+# Запускаем временный контейнер Nginx для генерации файла с помощью встроенной утилиты htpasswd
+# Флаг -B включает криптостойкий алгоритм Bcrypt, флаг -b позволяет передать пароль аргументом, -c создает файл
+docker run --rm -v "$(pwd)":/auth alpine:3.19 sh -c "
+  apk add --no-cache apache2-utils && \
+  htpasswd -B -b -c /auth/.htpasswd '$AUTH_USER' '$AUTH_PASSWORD'
+"
+
+# Устанавливаем безопасные права доступа (чтение для всех, запись только для владельца)
 chmod 644 .htpasswd
+echo "✅ Файл .htpasswd успешно сгенерирован с применением Bcrypt."
 
 # 3. Подстановка домена в nginx.conf
 echo "⚙️ Настройка конфигурации Nginx под домен $DOMAIN_NAME..."
