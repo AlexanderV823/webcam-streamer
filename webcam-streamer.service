@@ -1,0 +1,18 @@
+[Unit]
+Description=Go Lightweight WebCam Streamer Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+# На Debian группе video требуются права, но root гарантирует доступ к ioctl v4l2 без сбоев
+WorkingDirectory=/usr/local/bin/webcam-streamer
+ExecStart=/usr/local/bin/webcam-streamer/streamer
+Restart=always
+RestartSec=5
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=webcam-streamer
+
+[Install]
+WantedBy=multi-user.target
