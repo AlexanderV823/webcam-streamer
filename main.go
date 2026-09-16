@@ -17,7 +17,7 @@ func main() {
 	httpHandler := delivery.NewHTTPHandler(cameraUC)
 
 	mux := http.NewServeMux()
-	httpHandler.RegisterRoutes(mux)
+	handlerWithLogging := httpHandler.RegisterRoutes(mux)
 
 	// Читаем порт из окружения Docker
 	port := os.Getenv("APP_PORT")
@@ -26,7 +26,8 @@ func main() {
 	}
 
 	fmt.Printf("Легковесный стример запущен внутри контейнера на http://localhost:%s\n", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	// Передаем handlerWithLogging вместо mux
+	if err := http.ListenAndServe(":"+port, handlerWithLogging); err != nil { 
 		log.Fatalf("Ошибка сервера: %v", err)
 	}
 }

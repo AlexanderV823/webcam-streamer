@@ -18,10 +18,14 @@ func NewHTTPHandler(uc *usecase.CameraUseCase) *HTTPHandler {
 	return &HTTPHandler{uc: uc}
 }
 
-func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
+// RegisterRoutes настраивает маршруты и возвращает handler с примененными middleware
+func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) http.Handler {
 	mux.HandleFunc("/", h.HandleIndex)
 	mux.HandleFunc("/api/cameras", h.HandleCameras)
 	mux.HandleFunc("/stream", h.HandleStream)
+
+	// Оборачиваем весь mux в наш logging middleware
+	return LoggingMiddleware(mux)
 }
 
 func (h *HTTPHandler) HandleIndex(w http.ResponseWriter, r *http.Request) {
