@@ -3,50 +3,45 @@
 # Выход при любой ошибке
 set -e
 
-echo "=== Старт развертывания Go WebCam Streamer ==="
+echo "=== Старт развертывания через Docker Compose ==="
 
-# 1. Проверка прав суперпользователя
+# 1. Проверка прав суперпользователя (для генерации SSL и работы с Docker)
 if [ "$EUID" -ne 0 ]; then
   echo "❌ Пожалуйста, запустите скрипт с правами sudo"
   exit 1
 fi
 
-# 2. Установка системных зависимостей Debian
-echo "📦 Установка системных пакетов..."
-apt update && apt install -y v4l-utils openssl golang
-
-# 3. Подготовка директории приложения
-TARGET_DIR="/usr/local/bin/webcam-streamer"
-echo "📂 Подготовка директории $TARGET_DIR..."
-mkdir -p "$TARGET_DIR"
-
-# 4. Генерация SSL сертификатов (если их еще нет)
-if [ ! -f "server.crt" ] || [ ! -f "server.key" ]; then
-  echo "🔐 Генерация самоподписанных SSL-сертификатов..."
-  openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes -subj "/CN=localhost"
+# 2. Проверка наличия Docker и Docker Compose
+if ! command -v docker &> /dev/null || ! command -v docker compose &> /dev/null; then
+  echo "📦 Установка Docker и Docker Compose..."
+  apt-get update
+  apt-get install -y ca-certificates curl gnupg lsb-release
+  
+  # Добавление официального репозитория Docker
+  mkdir -p /etc/apt/keyrings
+  curl -fsSL https://docker.com | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://docker.com $(lsb_release -cs) stable" | tee /etc/apt/sources.list.min.d/docker.list > /dev/null
+  
+  apt-get update
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 fi
 
-# 5. Сборка Go приложения
-echo "🐹 Сборка Go приложения..."
-go mod tidy
-go build -ldflags="-s -w" -o streamer main.go
+# 3. Генерация SSL-сертификатов на хосте
+if [ ! -f "server.crt" ] || [ ! -f "server.key" ]; then
+  echo "🔐 SSL-сертификаты не найдены. Генерация самоподписанных сертификатов..."
+  openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes -subj "/CN=localhost"
+  # Устанавливаем права на чтение для контейнера
+  chmod 644 server.crt server.key
+else
+  echo "🔐 Использование существующих SSL-сертификатов (server.crt/server.key)"
+fi
 
-# 6. Копирование файлов в целевую директорию
-echo "🚚 Копирование файлов..."
-cp streamer server.crt server.key "$TARGET_DIR/"
-
-# 7. Настройка Systemd службы
-echo "⚙️ Настройка Systemd юнита..."
-cp webcam-streamer.service /etc/systemd/system/
-systemctl daemon-reload
-
-# 8. Активация и запуск сервиса
-echo "🔄 Запуск службы webcam-streamer..."
-systemctl enable webcam-streamer
-systemctl restart webcam-streamer
+# 4. Сборка и запуск контейнера в фоне
+echo "🏗 Сборка Docker-образа и запуск контейнера..."
+docker compose up --build -d
 
 echo "======================================================="
 echo "✅ Деплой успешно завершен!"
-echo "📺 Сервер доступен по адресу: https://localhost:8443"
-echo "📊 Статус службы: systemctl status webcam-streamer"
+echo "📺 Стример доступен по адресу: https://<IP_СЕРВЕРА>:8443"
+echo "📊 Логи контейнера: docker compose logs -f"
 echo "======================================================="
