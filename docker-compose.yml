@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  webcam-streamer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webcam-streamer
+    restart: always
+    ports:
+      - "8443:8443"
+    # Монтируем устройства хоста, чтобы скрипт мог сканировать /dev/video*
+    volumes:
+      - /dev:/dev
+      - ./server.crt:/app/server.crt:ro
+      - ./server.key:/app/server.key:ro
+    # privileged необходим для работы с IOCTL вызовами V4L2 драйверов хоста
+    privileged: true
+    environment:
+      - TZ=Europe/Moscow
