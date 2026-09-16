@@ -1,22 +1,37 @@
-# --- Этап 1: Сборка бинарника ---
-FROM golang:1.23-alpine AS builder
+# ==============================================================================
+# Стейдж 1: Сборка бинарного файла приложения на Go
+# ==============================================================================
+FROM golang:1.21-alpine AS builder
+
 WORKDIR /app
+
+# Копируем файлы описания зависимостей проекта
 COPY go.mod go.sum ./
+
+# Скачиваем Go-модули (теперь они весят меньше, так как go4vl удален)
 RUN go mod download
+
+# Копируем весь исходный код проекта
 COPY . .
-# Собираем статический бинарник без CGO
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o streamer main.go
 
-# --- Этап 2: Финальный легковесный образ ---
-FROM alpine:3.20
-RUN apk add --no-cache tzdata openssl
-WORKDIR /app
+# Собираем чистое Go-приложение БЕЗ CGO.
+# Это позволяет получить полностью статически слинкованный бинарник.
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /webcam-streamer ./main.go
 
-# Копируем бинарник из первого этапа
-COPY --from=builder /app/streamer .
+# ==============================================================================
+# Стейдж 2: Финальный легковесный образ для production
+# ==============================================================================
+FROM alpine:3.19
 
-# Экспонируем HTTPS порт
-EXPOSE 8443
+# Устанавливаем часовой пояс и сам FFmpeg для захвата видеопотоков
+RUN apk add --no-cache tzdata ffmpeg
 
-# Запуск приложения
-CMD ["./streamer"]
+WORKDIR /
+
+# Копируем скомпилированный Go-бинарник из предыдущего стейджа
+COPY --from=builder /webcam-streamer /webcam-streamer
+
+# Экспортируем порт (значение подставится из .env через docker-compose)
+EXPOSE 8080
+
+ENTRYPOINT ["/webcam-streamer"]
