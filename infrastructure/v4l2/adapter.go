@@ -9,7 +9,8 @@ import (
 	"strings"
 	"webcam-streamer/domain"
 
-	v4l2 "github.com/vladimirvivien/go4vl/device"
+	"github.com/vladimirvivien/go4vl/device"
+	"github.com/vladimirvivien/go4vl/v4l2"
 )
 
 // V4L2Repository реализует поиск видеоустройств в файловой системе Linux.
@@ -50,32 +51,36 @@ func NewV4L2Streamer() *V4L2Streamer {
 // Start открывает камеру через вызовы V4L2 в формате MJPEG, настраивает геометрию кадра,
 // FPS и запускает фоновую горутину для непрерывной прокачки кадров в канал передачи.
 func (s *V4L2Streamer) Start(ctx context.Context, path string, width, height, fps int) (<-chan []byte, <-chan error, error) {
-	// Инициализируем камеру с динамическим разрешением
-	cam, err := v4l2.Init(path, uint32(width), uint32(height), v4l2.MJPEG)
+	// Инициализируем камеру, передавая все параметры (разрешение и FPS) через опции конструктора
+	cam, err := device.Open(
+		path,
+		device.WithPixFormat(v4l2.PixFormat{
+			PixelFormat: v4l2.PixelFmtMJPEG,
+			Width:       uint32(width),
+			Height:      uint32(height),
+		}),
+		device.WithFPS(uint32(fps)), // Нативная установка FPS через внутреннее API go4vl
+	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("v4l2 init failed: %w", err)
+		return nil, nil, fmt.Errorf("v4l2 open failed: %w", err)
 	}
 
-	// Попытка принудительно выставить FPS
-	if err := cam.SetFps(uint32(fps)); err != nil {
-		// Некоторые дешевые камеры выбрасывают ошибку, если не поддерживают смену FPS.
-		// Логируем, но не прерываем работу.
-		fmt.Printf("⚠️ Предупреждение: Камера не поддерживает установку FPS %d: %v\n", fps, err)
-	}
-
-	if err := cam.Start(); err != nil {
-		cam.Close()
-		return nil, nil, fmt.Errorf("v4l2 start failed: %w", err)
+	// Запускаем внутренний конвейер захвата видеопотока go4vl
+	if err := cam.Start(ctx); err != nil {
+		_ = cam.Close()
+		return nil, nil, fmt.Errorf("v4l2 stream start failed: %w", err)
 	}
 
 	frameChan := make(chan []byte, 2)
 	errChan := make(chan error, 1)
 
-	// Асинхронный конвейер чтения кадров
+	// Получаем канал вывода кадров самой библиотеки
+	go4vlOutput := cam.GetOutput()
+
+	// Асинхронный конвейер перекачки кадров в транспортный слой
 	go func() {
 		defer func() {
-			cam.Stop()
-			cam.Close()
+			_ = cam.Close() // Закрытие устройства автоматически останавливает захват
 			close(frameChan)
 			close(errChan)
 		}()
@@ -84,14 +89,12 @@ func (s *V4L2Streamer) Start(ctx context.Context, path string, width, height, fp
 			select {
 			case <-ctx.Done():
 				return
-			default:
-				frame, err := cam.Read()
-				if err != nil {
-					errChan <- err
+			case frame, ok := <-go4vlOutput:
+				if !ok {
 					return
 				}
 
-				// Передаем кадр в канал, если есть читатель
+				// Передаем кадр дальше, если HTTP-обработчик готов его принять
 				select {
 				case frameChan <- frame:
 				case <-ctx.Done():
