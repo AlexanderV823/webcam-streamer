@@ -3,8 +3,11 @@ package ffmpeg
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log"
+	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -40,15 +43,22 @@ func (s *FFmpegStreamer) Start(ctx context.Context, path string, width, height, 
 		"pipe:1", // Гоним поток в stdout (пайп)
 	)
 
+	ffmpegPath := "ffmpeg"
+	if runtime.GOOS == "windows" {
+		ffmpegPath = "C:\\ffmpeg\\bin\\ffmpeg.exe"
+	}
+
 	// Создаем команду запуска процесса ffmpeg с контекстом для автоматического завершения
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		log.Printf("❌ FFmpeg Streamer Error: не удалось создать stdout pipe: %v", err)
 		return nil, nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
+		log.Printf("❌ FFmpeg Streamer Error: не удалось запустить ffmpeg по пути %s. Ошибка: %v", ffmpegPath, err)
 		return nil, nil, fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
 
@@ -64,13 +74,6 @@ func (s *FFmpegStreamer) Start(ctx context.Context, path string, width, height, 
 			close(errChan)
 		}()
 
-		// Инициализируем буферизированный читатель.
-		// MJPEG использует маркеры начала кадра (0xFFD8) и конца кадра (0xFFD9).
-		// Однако утилита ffmpeg при формате mpjpeg сама расставляет boundary,
-		// но проще читать поток блоками через Split-функцию или кастомный парсер партиций.
-
-		// Для простоты примера используем чтение кусками (в реальном продакшене
-		// используется парсер multipart-потока по байтовым маркерам JPEG)
 		reader := bufio.NewReader(stdout)
 
 		for {
@@ -78,12 +81,11 @@ func (s *FFmpegStreamer) Start(ctx context.Context, path string, width, height, 
 			case <-ctx.Done():
 				return
 			default:
-				// Реализация чтения отдельного кадра по маркерам JPEG:
-				// 1. Ищем маркер 0xFFD8 (Start of Image)
-				// 2. Читаем до маркера 0xFFD9 (End of Image)
+				// Читаем отдельный кадр по исправленному алгоритму с Peek
 				frame, err := readJPEGFrame(reader)
 				if err != nil {
-					if err != io.EOF {
+					if err != io.EOF && !errors.Is(err, os.ErrClosed) {
+						log.Printf("⚠️ FFmpeg Streamer Warning: ошибка чтения JPEG кадра: %v", err)
 						errChan <- err
 					}
 					return
@@ -101,29 +103,31 @@ func (s *FFmpegStreamer) Start(ctx context.Context, path string, width, height, 
 	return frameChan, errChan, nil
 }
 
-// Простейший низкоуровневый парсер JPEG-кадров из бинарного стрима
+// Исправленный надежный парсер JPEG-кадров из бинарного стрима FFmpeg
 func readJPEGFrame(r *bufio.Reader) ([]byte, error) {
 	var frame []byte
 
-	// Синхронизация: ищем начало JPEG (0xFF, 0xD8)
+	// 1. Синхронизация: ищем начало JPEG (0xFF, 0xD8)
 	for {
 		b, err := r.ReadByte()
 		if err != nil {
 			return nil, err
 		}
 		if b == 0xFF {
-			next, err := r.ReadByte()
+			// Проверяем следующий байт без его удаления из буфера
+			nextBytes, err := r.Peek(1)
 			if err != nil {
 				return nil, err
 			}
-			if next == 0xD8 {
+			if nextBytes[0] == 0xD8 {
+				_, _ = r.ReadByte() // Теперь фактически забираем 0xD8 из буфера
 				frame = append(frame, 0xFF, 0xD8)
 				break
 			}
 		}
 	}
 
-	// Читаем тело кадра, пока не встретим конец JPEG (0xFF, 0xD9)
+	// 2. Читаем тело кадра, пока не встретим конец JPEG (0xFF, 0xD9)
 	for {
 		b, err := r.ReadByte()
 		if err != nil {
@@ -132,13 +136,14 @@ func readJPEGFrame(r *bufio.Reader) ([]byte, error) {
 		frame = append(frame, b)
 
 		if b == 0xFF {
-			next, err := r.ReadByte()
+			nextBytes, err := r.Peek(1)
 			if err != nil {
 				return nil, err
 			}
-			frame = append(frame, next)
-			if next == 0xD9 {
-				break // Кадр успешно прочитан полностью
+			if nextBytes[0] == 0xD9 {
+				_, _ = r.ReadByte() // Забираем 0xD9
+				frame = append(frame, 0xD9)
+				break // Кадр успешно собран
 			}
 		}
 	}

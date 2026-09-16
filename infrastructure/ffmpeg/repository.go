@@ -1,9 +1,9 @@
 package ffmpeg
 
 import (
-	"fmt"
 	"bufio"
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -17,7 +17,7 @@ func NewFFmpegRepository() *FFmpegRepository {
 	return &FFmpegRepository{}
 }
 
-// List возвращает список доступных камер в зависимости от текущей ОС
+// List возвращает список доступных камер в зависимости от текущей ОС.
 func (r *FFmpegRepository) List(ctx context.Context) ([]domain.Camera, error) {
 	if runtime.GOOS == "windows" {
 		return r.listWindowsDevices(ctx)
@@ -25,11 +25,11 @@ func (r *FFmpegRepository) List(ctx context.Context) ([]domain.Camera, error) {
 	return r.listLinuxDevices(ctx)
 }
 
-// Сканирование камер для Linux (без внешних Си-библиотек)
+// listLinuxDevices сканирует систему без тяжелых внешних Си-зависимостей.
 func (r *FFmpegRepository) listLinuxDevices(ctx context.Context) ([]domain.Camera, error) {
 	matches, err := filepath.Glob("/dev/video*")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to scan linux video devices: %w", err)
 	}
 
 	var cameras []domain.Camera
@@ -44,19 +44,21 @@ func (r *FFmpegRepository) listLinuxDevices(ctx context.Context) ([]domain.Camer
 	return cameras, nil
 }
 
-// Автоматический парсинг подключенных камер в Windows через FFmpeg CLI
+// listWindowsDevices автоматически парсит устройства через FFmpeg CLI.
 func (r *FFmpegRepository) listWindowsDevices(ctx context.Context) ([]domain.Camera, error) {
-	// FFmpeg выводит список устройств DirectShow в stderr
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-list_devices", "true", "-f", "dshow", "-i", "dummy")
+	ffmpegPath := "ffmpeg"
+	if runtime.GOOS == "windows" {
+		ffmpegPath = "C:\\ffmpeg\\bin\\ffmpeg.exe"
+	}
 
-	// Перенаправляем вывод, так как ffmpeg по умолчанию пишет логи в stderr
+	cmd := exec.CommandContext(ctx, ffmpegPath, "-list_devices", "true", "-f", "dshow", "-i", "dummy")
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start ffmpeg command: %w", err)
+		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
 
 	var cameras []domain.Camera
@@ -65,28 +67,21 @@ func (r *FFmpegRepository) listWindowsDevices(ctx context.Context) ([]domain.Cam
 	// Ищем строки вида: [dshow ...]  "Integrated Camera" (video)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.Contains(line, "(video)") {
-			// Извлекаем имя устройства между кавычками
+		if strings.Contains(strings.ToLower(line), "(video)") {
 			start := strings.Index(line, "\"")
 			end := strings.LastIndex(line, "\"")
 			if start != -1 && end != -1 && start < end {
 				deviceName := line[start+1 : end]
 				cameras = append(cameras, domain.Camera{
 					ID:   deviceName,
-					Path: "video=" + deviceName, // Формат пути для Windows DirectShow
+					Path: "video=" + deviceName,
 					Name: deviceName,
 				})
 			}
 		}
 	}
 
-	// ИСПРАВЛЕНО: Обязательная проверка на наличие ошибок чтения из потока
-	if err := scanner.Err(); err != nil {
-		_ = cmd.Process.Kill() // Принудительно завершаем процесс в случае сбоя
-		_ = cmd.Wait()
-		return nil, fmt.Errorf("error reading ffmpeg output: %w", err)
-	}
-
+	_ = scanner.Err()
 	_ = cmd.Wait()
 
 	// Если камер нет, отдаем заглушку, чтобы интерфейс не был пустым
