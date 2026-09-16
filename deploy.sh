@@ -11,34 +11,71 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# 1. Создание и интерактивное редактирование .env
-if [ ! -f ".env" ]; then
-  echo "📝 Файл .env не найден. Создаю его из примера..."
-  cp .env.example .env
-  
-  echo "⚙️ Открываю текстовый редактор nano..."
-  echo "👉 Задайте значения для DOMAIN_NAME, AUTH_USER и AUTH_PASSWORD."
-  echo "👉 Для сохранения нажмите Ctrl+O, затем Enter. Для выхода: Ctrl+X."
-  sleep 3 # Небольшая пауза, чтобы пользователь успел прочитать подсказку
-  
-  # Открываем nano напрямую в текущей сессии терминала
-  nano .env
-  
-  echo "✅ Файл .env сохранен. Продолжаю процесс развертывания..."
-fi
+# 1. Создание, интерактивное редактирование и валидация .env
+while true; do
+  if [ ! -f ".env" ]; then
+    echo "📝 Файл .env не найден. Создаю его из примера..."
+    cp .env.example .env
+    
+    echo "⚙️ Открываю текстовый редактор nano..."
+    echo "👉 Задайте значения для DOMAIN_NAME, AUTH_USER и AUTH_PASSWORD."
+    echo "👉 Для сохранения нажмите Ctrl+O, затем Enter. Для выхода: Ctrl+X."
+    sleep 3
+    
+    nano .env
+  fi
 
-# Загружаем переменные из .env
-export $(grep -v '^#' .env | xargs)
+  echo "🔍 Проверяю корректность заполнения .env..."
+  
+  # Временный сброс переменных, чтобы старые данные из сессии не мешали проверке
+  unset DOMAIN_NAME AUTH_USER AUTH_PASSWORD CERTBOT_EMAIL APP_PORT
+  
+  # Читаем свежие переменные из файла
+  export $(grep -v '^#' .env | xargs)
 
-if [ "$DOMAIN_NAME" == "localhost" ] || [ -z "$DOMAIN_NAME" ]; then
-  echo "❌ Ошибка: В .env указан домен '$DOMAIN_NAME'. Для Let's Encrypt нужен реальный домен!"
-  exit 1
-fi
+  # Флаг валидности
+  VALID=true
 
-if [ -z "$AUTH_USER" ] || [ -z "$AUTH_PASSWORD" ]; then
-  echo "❌ Ошибка: AUTH_USER или AUTH_PASSWORD не могут быть пустыми в .env!"
-  exit 1
-fi
+  # Проверка домена
+  if [ -z "$DOMAIN_NAME" ] || [ "$DOMAIN_NAME" == "localhost" ] || [ "$DOMAIN_NAME" == "example.com" ]; then
+    echo "❌ Ошибка: Переменная DOMAIN_NAME пустая или содержит некорректный домен ($DOMAIN_NAME)."
+    VALID=false
+  fi
+
+  # Проверка логина
+  if [ -z "$AUTH_USER" ] || [ "$AUTH_USER" == "admin" ]; then
+    echo "❌ Ошибка: AUTH_USER пустой или оставлен дефолтным (admin)."
+    VALID=false
+  fi
+
+  # Проверка пароля
+  if [ -z "$AUTH_PASSWORD" ] || [ "$AUTH_PASSWORD" == "my_secure_password_123" ]; then
+    echo "❌ Ошибка: AUTH_PASSWORD пустой или оставлен дефолтным из примера."
+    VALID=false
+  fi
+
+  # Проверка email
+  if [ -z "$CERTBOT_EMAIL" ] || [ "$CERTBOT_EMAIL" == "admin@example.com" ]; then
+    echo "❌ Ошибка: CERTBOT_EMAIL пустой или оставлен дефолтным."
+    VALID=false
+  fi
+
+  # Если всё заполнено верно, выходим из цикла и идем дальше по скрипту
+  if [ "$VALID" = true ]; then
+    echo "✅ Валидация успешна! Переменные окружения заполнены корректно."
+    break
+  else
+    echo "⚠️ Конфигурация содержит ошибки. Перезапустить редактирование .env? (y/n)"
+    read -r response
+    if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+      # Удаляем некорректный .env, чтобы цикл создал его заново на следующем круге
+      rm .env
+    else
+      echo "🛑 Развертывание прервано пользователем."
+      exit 1
+    fi
+  fi
+done
 
 # 2. Генерация файла .htpasswd средствами openssl
 echo "🔐 Генерация файла паролей .htpasswd для пользователя: $AUTH_USER..."
