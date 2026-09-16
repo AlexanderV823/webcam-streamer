@@ -40,13 +40,13 @@ func (h *HTTPHandler) HandleIndex(w http.ResponseWriter, r *http.Request) {
 // HandleCameras возвращает список доступных видеоустройств сервера в формате JSON.
 func (h *HTTPHandler) HandleCameras(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	cameras, err := h.uc.GetAvailableCameras(r.Context())
 	if err != nil {
 		http.Error(w, `{"error":"failed to get cameras"}`, http.StatusInternalServerError)
 		return
 	}
-	
+
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(cameras)
 }
@@ -65,6 +65,7 @@ func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 	height := getQueryInt(r, "h", 480)
 	fps := getQueryInt(r, "fps", 30)
 
+	// Привязываем жизненный цикл стрима к контексту HTTP-запроса клиента
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
@@ -81,16 +82,26 @@ func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Клиент отключился (закрыл вкладку или прервал соединение)
 			return
-		case err := <-errChan:
-			if err != nil {
+
+		case err, ok := <-errChan:
+			if !ok {
+				// Инфраструктурный слой закрыл канал ошибок — стрим завершен
 				return
 			}
-		case frame, ok := <-frameChan:
-			if !ok {
+			if err != nil {
+				// Произошла реальная ошибка чтения с физической камеры
 				return
 			}
 
+		case frame, ok := <-frameChan:
+			if !ok {
+				// Канал кадров закрыт (например, камера была отключена физически)
+				return
+			}
+
+			// Формируем заголовки для текущего JPEG-кадра в MJPEG-потоке
 			partHeader := make(textproto.MIMEHeader)
 			partHeader.Set("Content-Type", "image/jpeg")
 			partHeader.Set("Content-Length", fmt.Sprintf("%d", len(frame)))
@@ -100,7 +111,9 @@ func (h *HTTPHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			// Записываем бинарные данные кадра в HTTP-ответ
 			if _, err := partWriter.Write(frame); err != nil {
+				// Ошибка записи (клиент мог оборвать соединение во время отправки)
 				return
 			}
 		}
