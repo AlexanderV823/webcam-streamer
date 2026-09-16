@@ -9,7 +9,7 @@ import (
 	"strings"
 	"webcam-streamer/domain"
 
-	"github.com/vladimirvivien/go4vl"
+	v4l2 "github.com/vladimirvivien/go4vl/device"
 )
 
 // V4L2Repository реализует поиск видеоустройств в файловой системе Linux.
@@ -68,7 +68,7 @@ func (s *V4L2Streamer) Start(ctx context.Context, path string, width, height, fp
 		return nil, nil, fmt.Errorf("v4l2 start failed: %w", err)
 	}
 
-	frameChan := make(chan []byte)
+	frameChan := make(chan []byte, 2)
 	errChan := make(chan error, 1)
 
 	// Асинхронный конвейер чтения кадров
