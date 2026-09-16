@@ -1,5 +1,12 @@
 version: '3.8'
 
+# Общие настройки логирования с переменными из .env
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "${LOG_MAX_SIZE}"
+    max-file: "${LOG_MAX_FILES}"
+
 services:
   webcam-streamer:
     build:
@@ -15,6 +22,7 @@ services:
     volumes:
       - /dev:/dev
     privileged: true
+    logging: *default-logging
 
   nginx:
     image: nginx:1.25-alpine
@@ -30,6 +38,7 @@ services:
       - ./.htpasswd:/etc/nginx/.htpasswd:ro
     depends_on:
       - webcam-streamer
+    logging: *default-logging
 
   certbot:
     image: certbot/certbot
@@ -39,3 +48,4 @@ services:
       - ./certbot/www:/var/www/certbot
     # Скрипт проверки и автоматического продления сертификата каждые 12 часов
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    logging: *default-logging
