@@ -3,7 +3,7 @@
 # Выход при любой ошибке
 set -e
 
-echo "=== Старт развертывания через Docker Compose ==="
+echo "=== Деплой Go Streamer + Nginx + Let's Encrypt ==="
 
 # 1. Проверка прав суперпользователя (для генерации SSL и работы с Docker)
 if [ "$EUID" -ne 0 ]; then
@@ -11,37 +11,47 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-# 2. Проверка наличия Docker и Docker Compose
-if ! command -v docker &> /dev/null || ! command -v docker compose &> /dev/null; then
-  echo "📦 Установка Docker и Docker Compose..."
-  apt-get update
-  apt-get install -y ca-certificates curl gnupg lsb-release
-  
-  # Добавление официального репозитория Docker
-  mkdir -p /etc/apt/keyrings
-  curl -fsSL https://docker.com | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://docker.com $(lsb_release -cs) stable" | tee /etc/apt/sources.list.min.d/docker.list > /dev/null
-  
-  apt-get update
-  apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+# 1. Создание .env из примера
+if [ ! -f ".env" ]; then
+  echo "📝 Создание файла .env..."
+  cp .env.example .env
+  echo "⚠️ Внимание: отредактируйте файл .env, указав свой реальный DOMAIN_NAME, затем запустите скрипт снова."
+  exit 0
 fi
 
-# 3. Генерация SSL-сертификатов на хосте
-if [ ! -f "server.crt" ] || [ ! -f "server.key" ]; then
-  echo "🔐 SSL-сертификаты не найдены. Генерация самоподписанных сертификатов..."
-  openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt -days 365 -nodes -subj "/CN=localhost"
-  # Устанавливаем права на чтение для контейнера
-  chmod 644 server.crt server.key
+# Загружаем переменные из .env
+export $(grep -v '^#' .env | xargs)
+
+if [ "$DOMAIN_NAME" == "localhost" ] || [ -z "$DOMAIN_NAME" ]; then
+  echo "❌ Ошибка: В .env указан домен '$DOMAIN_NAME'. Для Let's Encrypt нужен реальный домен!"
+  exit 1
+fi
+
+# 2. Подстановка домена в nginx.conf
+echo "⚙️ Настройка конфигурации Nginx под домен $DOMAIN_NAME..."
+sed -i "s/server_name .*/server_name $DOMAIN_NAME;/g" nginx.conf
+sed -i "s|/live/[^/]*/|/live/$DOMAIN_NAME/|g" nginx.conf
+
+# 3. Первый запуск Nginx для прохождения проверки Certbot
+echo "🏗 Запуск временного Nginx для выпуска сертификата..."
+docker compose up -d nginx
+
+# 4. Запрос сертификата Let's Encrypt
+if [ ! -d "./certbot/conf/live/$DOMAIN_NAME" ]; then
+  echo "🔐 Запрос SSL сертификата у Let's Encrypt для $DOMAIN_NAME..."
+  docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
+    -d "$DOMAIN_NAME" --email "$CERTBOT_EMAIL" --rsa-key-size 4096 \
+    --agree-tos --non-interactive
 else
-  echo "🔐 Использование существующих SSL-сертификатов (server.crt/server.key)"
+  echo "🔐 Сертификаты Let's Encrypt уже существуют."
 fi
 
-# 4. Сборка и запуск контейнера в фоне
-echo "🏗 Сборка Docker-образа и запуск контейнера..."
+# 5. Полный перезапуск всей инфраструктуры
+echo "🚀 Перезапуск всех сервисов в боевом режиме..."
+docker compose down
 docker compose up --build -d
 
 echo "======================================================="
-echo "✅ Деплой успешно завершен!"
-echo "📺 Стример доступен по адресу: https://<IP_СЕРВЕРА>:8443"
-echo "📊 Логи контейнера: docker compose logs -f"
+echo "✅ Инфраструктура успешно развернута!"
+echo "📺 Защищенный стрим доступен по адресу: https://$DOMAIN_NAME"
 echo "======================================================="
