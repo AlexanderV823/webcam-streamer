@@ -4,33 +4,36 @@ package usecase
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"webcam-streamer/internal/camera"
 )
 
-// CameraUseCase инкапсулирует логику управления камерами и потоками.
+// CameraUseCase реализует интерфейс camera.CameraUseCase
 type CameraUseCase struct {
 	repo     camera.CameraRepository
 	streamer camera.CameraStreamer
 }
 
-// NewCameraUseCase выступает в роли конструктора для создания CameraUseCase
-// с внедрением необходимых зависимостей (репозитория и стримера).
-func NewCameraUseCase(r camera.CameraRepository, s camera.CameraStreamer) *CameraUseCase {
-	return &CameraUseCase{repo: r, streamer: s}
-}
-
-// GetAvailableCameras возвращает список всех подключенных к серверу камер,
-// запрашивая данные у нижележащего репозитория.
-func (uc *CameraUseCase) GetAvailableCameras(ctx context.Context) ([]camera.Camera, error) {
-	return uc.repo.List(ctx)
-}
-
-// GetStream проверяет корректность входных параметров и запрашивает асинхронный запуск
-// видеотрансляции с указанными настройками разрешения и частоты кадров.
-func (uc *CameraUseCase) GetStream(ctx context.Context, path string, width, height, fps int) (<-chan []byte, <-chan error, error) {
-	if path == "" {
-		return nil, nil, errors.New("camera path cannot be empty")
+// NewCameraUseCase создает новый экземпляр бизнес-логики
+func NewCameraUseCase(repo camera.CameraRepository, streamer camera.CameraStreamer) *CameraUseCase {
+	return &CameraUseCase{
+		repo:     repo,
+		streamer: streamer,
 	}
-	return uc.streamer.Start(ctx, path, width, height, fps)
+}
+
+// StartStream реализует бизнес-логику запуска трансляции
+func (uc *CameraUseCase) StartStream(ctx context.Context, id string, width, height, fps int) (<-chan []byte, <-chan error, error) {
+	var streamURL string
+	if uc.repo != nil {
+		cam, err := uc.repo.GetByID(ctx, id)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get camera: %w", err)
+		}
+		streamURL = cam.Path // Используем только существующее поле Path
+	} else {
+		streamURL = id 
+	}
+
+	return uc.streamer.Start(ctx, streamURL, width, height, fps)
 }

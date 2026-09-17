@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webcam Streamer</title>
+    <style>
+        body { font-family: sans-serif; background: #1e1e24; color: #f5f5f5; text-align: center; padding: 20px; }
+        .stream-container { margin: 20px auto; max-width: 640px; border: 2px solid #3f3f46; border-radius: 8px; overflow: hidden; background: #000; }
+        img { width: 100%; height: auto; display: block; }
+    </style>
+</head>
+<body>
+    <h1>Мониторинг камеры</h1>
+    <div class="stream-container">
+        <!-- Показываем MJPEG поток, передавая ID камеры из параметров -->
+        <img id="stream" src="/stream?id=cam1" alt="Поток камеры загружается...">
+    </div>
+    <script>
+        // Динамически подставляем ID камеры из URL страницы, если он передан (например, /?id=camera_2)
+        const urlParams = new URLSearchParams(window.location.search);
+        const camId = urlParams.get('id') || 'cam1';
+        document.getElementById('stream').src = `/stream?id=${camId}`;
+    </script>
+</body>
+</html>

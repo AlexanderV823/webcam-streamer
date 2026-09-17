@@ -4,7 +4,7 @@ package camera
 
 import "context"
 
-// Camera описывает доменную сущность физического или виртуального USB-устройства.
+// Camera описывает сущность видеокамеры в системе
 type Camera struct {
 	// ID содержит короткий идентификатор устройства (например, "video0").
 	ID   string `json:"id"`
@@ -14,15 +14,17 @@ type Camera struct {
 	Name string `json:"name"`
 }
 
-// CameraRepository определяет контракт для сканирования и получения списка камер в системе.
-type CameraRepository interface {
-	// List возвращает срез всех доступных видеоустройств, обнаруженных в операционной системе.
-	List(ctx context.Context) ([]Camera, error)
+// CameraUseCase задает контракт для слоя бизнес-логики (сценариев использования)
+type CameraUseCase interface {
+	StartStream(ctx context.Context, id string, width, height, fps int) (<-chan []byte, <-chan error, error)
 }
 
-// CameraStreamer определяет контракт для низкоуровневого захвата видеопотока.
+// CameraRepository задает контракт для работы с хранилищем (базой данных или конфигом)
+type CameraRepository interface {
+	GetByID(ctx context.Context, id string) (*Camera, error)
+}
+
+// CameraStreamer задает контракт для низкоуровневого стримера (FFmpeg)
 type CameraStreamer interface {
-	// Start инициализирует захват кадров с устройства по указанному пути с заданным качеством
-	// и возвращает каналы для чтения бинарных кадров и отслеживания ошибок.
-	Start(ctx context.Context, path string, width, height, fps int) (<-chan []byte, <-chan error, error)
+	Start(ctx context.Context, url string, width, height, fps int) (<-chan []byte, <-chan error, error)
 }

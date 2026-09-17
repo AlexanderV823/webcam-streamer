@@ -32,7 +32,8 @@ webcam-streamer/
 │   └── infrastructure/     # Реализация интерфейсов (драйверы, внешние адаптеры)
 │       └── ffmpeg/
 │           ├── repository.go 
-│           └── streamer.go
+│           ├── streamer_linux.go
+│           └── streamer_others.go
 ├── configs/                # Файлы конфигурации (шаблоны, Nginx, env)
 │   ├── .env.example
 │   └── nginx.conf
