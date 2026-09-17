@@ -17,24 +17,32 @@
 
 ```text
 webcam-streamer/
-├── delivery/          # Внешние интерфейсы (HTTP / Web-страница)
-│   └── http/
-│       ├── handler.go # HTTP-эндпоинты (/stream, /api/cameras)
-│       └── views.go   # Веб-интерфейс (HTML/JS строковая константа)
-├── domain/            # Бизнес-сущности и интерфейсы (контракты)
-│   └── camera.go
-├── usecase/           # Сценарии использования (логика приложения)
-│   └── camera_uc.go
-├── infrastructure/    # Низкоуровневая реализация интерфейсов (драйверы)
-│   └── v4l2/
-│       └── adapter.go # Прямая работа с системной шиной /dev/video*
-├── .env.example       # Шаблон переменных окружения
-├── .gitignore         # Исключения для Git (пароли, логи, сертификаты)
-├── deploy.sh          # Скрипт интерактивного развертывания (валидация + Docker)
-├── docker-compose.yml # Оркестрация контейнеров (Go + Nginx + Certbot)
-├── Dockerfile         # Мультистейдж сборка легковесного Alpine-образа бэкенда
-├── main.go            # Точка входа и сборка зависимостей (Dependency Injection)
-└── nginx.conf         # Конфигурация Reverse Proxy, SSL и Basic Auth
+├── cmd/
+│   └── streamer/
+│       └── main.go         # Точка входа (инициализация, DI, запуск сервера)
+├── internal/               # Внутренний код приложения (защищен от импорта извне)
+│   ├── camera/             # Домен, юзкейсы и доставка сгруппированы по смыслу
+│   │   ├── delivery/
+│   │   │   └── http/
+│   │   │       ├── handler.go
+│   │   │       └── views.go
+│   │   ├── usecase/
+│   │   │   └── camera_uc.go
+│   │   └── domain.go       # Сущности и интерфейсы (бывший domain/camera.go)
+│   └── infrastructure/     # Реализация интерфейсов (драйверы, внешние адаптеры)
+│       └── ffmpeg/
+│           ├── repository.go 
+│           └── streamer.go
+├── configs/                # Файлы конфигурации (шаблоны, Nginx, env)
+│   ├── .env.example
+│   └── nginx.conf
+├── deployments/            # Скрипты и конфигурации для развертывания
+│   ├── docker-compose.yml
+│   ├── Dockerfile
+│   └── deploy.sh
+├── .gitignore
+├── go.mod
+└── go.sum
 ```
 
 ---
