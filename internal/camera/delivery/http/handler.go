@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"strconv"
-	"webcam-streamer/usecase"
+	"webcam-streamer/internal/camera/usecase"
 )
 
 // HTTPHandler управляет обработкой всех сетевых эндпоинтов приложения.

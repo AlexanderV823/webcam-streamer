@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"webcam-streamer/domain"
+	"webcam-streamer/internal/camera"
 )
 
 type FFmpegRepository struct{}
@@ -18,7 +18,7 @@ func NewFFmpegRepository() *FFmpegRepository {
 }
 
 // List возвращает список доступных камер в зависимости от текущей ОС.
-func (r *FFmpegRepository) List(ctx context.Context) ([]domain.Camera, error) {
+func (r *FFmpegRepository) List(ctx context.Context) ([]camera.Camera, error) {
 	if runtime.GOOS == "windows" {
 		return r.listWindowsDevices(ctx)
 	}
@@ -26,16 +26,16 @@ func (r *FFmpegRepository) List(ctx context.Context) ([]domain.Camera, error) {
 }
 
 // listLinuxDevices сканирует систему без тяжелых внешних Си-зависимостей.
-func (r *FFmpegRepository) listLinuxDevices(ctx context.Context) ([]domain.Camera, error) {
+func (r *FFmpegRepository) listLinuxDevices(ctx context.Context) ([]camera.Camera, error) {
 	matches, err := filepath.Glob("/dev/video*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan linux video devices: %w", err)
 	}
 
-	var cameras []domain.Camera
+	var cameras []camera.Camera
 	for _, match := range matches {
 		id := strings.TrimPrefix(match, "/dev/")
-		cameras = append(cameras, domain.Camera{
+		cameras = append(cameras, camera.Camera{
 			ID:   id,
 			Path: match,
 			Name: "Linux USB Camera " + id,
@@ -45,7 +45,7 @@ func (r *FFmpegRepository) listLinuxDevices(ctx context.Context) ([]domain.Camer
 }
 
 // listWindowsDevices автоматически парсит устройства через FFmpeg CLI.
-func (r *FFmpegRepository) listWindowsDevices(ctx context.Context) ([]domain.Camera, error) {
+func (r *FFmpegRepository) listWindowsDevices(ctx context.Context) ([]camera.Camera, error) {
 	ffmpegPath := "ffmpeg"
 	if runtime.GOOS == "windows" {
 		ffmpegPath = "C:\\ffmpeg\\bin\\ffmpeg.exe"
@@ -61,7 +61,7 @@ func (r *FFmpegRepository) listWindowsDevices(ctx context.Context) ([]domain.Cam
 		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
 
-	var cameras []domain.Camera
+	var cameras []camera.Camera
 	scanner := bufio.NewScanner(stderr)
 
 	// Ищем строки вида: [dshow ...]  "Integrated Camera" (video)
@@ -72,7 +72,7 @@ func (r *FFmpegRepository) listWindowsDevices(ctx context.Context) ([]domain.Cam
 			end := strings.LastIndex(line, "\"")
 			if start != -1 && end != -1 && start < end {
 				deviceName := line[start+1 : end]
-				cameras = append(cameras, domain.Camera{
+				cameras = append(cameras, camera.Camera{
 					ID:   deviceName,
 					Path: "video=" + deviceName,
 					Name: deviceName,
@@ -86,7 +86,7 @@ func (r *FFmpegRepository) listWindowsDevices(ctx context.Context) ([]domain.Cam
 
 	// Если камер нет, отдаем заглушку, чтобы интерфейс не был пустым
 	if len(cameras) == 0 {
-		return []domain.Camera{
+		return []camera.Camera{
 			{ID: "cam0", Path: "video=Integrated Camera", Name: "Default Windows Camera (Placeholder)"},
 		}, nil
 	}
