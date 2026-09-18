@@ -22,7 +22,10 @@ func main() {
 	log.Println("[INIT] Инициализация системы видеотрансляции...")
 
 	// 1. Загрузка и строгая валидация конфигурации из .env
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("[CRITICAL SECURITY ERROR] %v", err)
+	}
 
 	// 2. Автосканирование доступных физических USB-устройств в системе
 	log.Println("[INIT] Сканирование доступных USB-веб-камер...")

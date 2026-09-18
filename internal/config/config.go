@@ -1,7 +1,7 @@
 package config
 
 import (
-	"log"
+	"errors"
 	"os"
 	"strings"
 )
@@ -14,8 +14,8 @@ type Config struct {
 	DefaultCam   string
 }
 
-func Load() *Config {
-	// Примитивный парсинг .env, если он существует
+// Load считывает .env и валидирует данные, возвращая ошибку вместо жесткого падения процесса
+func Load() (*Config, error) {
 	if data, err := os.ReadFile(".env"); err == nil {
 		lines := strings.Split(string(data), "\n")
 		for _, line := range lines {
@@ -39,12 +39,12 @@ func Load() *Config {
 
 	// ЖЕСТКАЯ ПРОВЕРКА БЕЗОПАСНОСТИ: Если секреты не заданы — останавливаем приложение
 	if username == "" || passwordHash == "" || jwtSecret == "" {
-		log.Fatal("[CRITICAL SECURITY ERROR] Критические переменные окружения (ADMIN_USERNAME, ADMIN_PASSWORD_HASH, JWT_SECRET) должны быть обязательно настроены в .env файле перед деплоем!")
+		return nil, errors.New("критические переменные окружения отсутствуют")
 	}
 
 	// Проверяем длину JWT ключа для гарантированной стойкости HMAC-SHA256
 	if len(jwtSecret) < 32 {
-		log.Fatal("[CRITICAL SECURITY ERROR] Переменная JWT_SECRET слишком короткая! Длина должна быть не менее 32 символов для защиты от перебора подписей.")
+		return nil, errors.New("переменная JWT_SECRET слишком короткая (минимум 32 символа)")
 	}
 
 	return &Config{
@@ -53,7 +53,7 @@ func Load() *Config {
 		PasswordHash: passwordHash,
 		JWTSecret:    jwtSecret,
 		DefaultCam:   defaultCam,
-	}
+	}, nil
 }
 
 func getEnv(key, fallback string) string {
