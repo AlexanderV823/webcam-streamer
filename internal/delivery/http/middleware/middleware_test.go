@@ -32,7 +32,7 @@ func TestMiddleware_Logger_And_RateLimiter(t *testing.T) {
 	mw := NewMiddleware(authUC, 1024)
 
 	// Создаем тестовый хэндлер, который возвращает статус 200 OK
-	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 

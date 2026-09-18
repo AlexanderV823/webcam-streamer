@@ -11,7 +11,7 @@ import (
 
 // Тестовые структуры, реализующие интерфейсы ядра
 type testCapture struct{ returnErr bool }
-func (tc *testCapture) Init(path string) error { return nil }
+func (tc *testCapture) Init(_ string) error { return nil }
 func (tc *testCapture) ReadFrame() ([]byte, error) {
 	if tc.returnErr {
 		return nil, errors.New("hardware fail")

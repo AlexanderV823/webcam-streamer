@@ -19,7 +19,7 @@ import (
 // testCapture реализует domain.VideoCapture для использования в HTTP-тестах
 type testCapture struct{}
 
-func (tc *testCapture) Init(path string) error      { return nil }
+func (tc *testCapture) Init(_ string) error      { return nil }
 func (tc *testCapture) ReadFrame() ([]byte, error) { return []byte{0xFF, 0xD8, 0xFF}, nil }
 func (tc *testCapture) Close() error               { return nil }
 
