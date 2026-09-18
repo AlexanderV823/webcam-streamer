@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: webcam-streamer-app
+    restart: always
+    privileged: true # Предоставляет Go прямой низкоуровневый доступ к ioctl USB веб-камер
+    volumes:
+      - /dev:/dev # Динамический проброс системных устройств для автосканирования камер на лету
+    environment:
+      - SERVER_PORT=8080
+      - SERVER_IP=${SERVER_IP}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD_HASH=${ADMIN_PASSWORD_HASH}
+      - JWT_SECRET=${JWT_SECRET}
+      - DEFAULT_CAMERA=${DEFAULT_CAMERA}
+    expose:
+      - "8080"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m" # Ограничение размера лога до 10 МБ для защиты диска сервера
+        max-file: "3"
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: webcam-streamer-nginx
+    restart: always
+    ports:
+      - "80:80" # Открываем наружу только стандартный HTTP веб-порт
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
