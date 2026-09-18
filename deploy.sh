@@ -90,11 +90,21 @@ sudo sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD_HASH=$BCRYPT_HASH|" .env
 unset ADMIN_PASS
 echo "✅ Текстовый пароль успешно заменен на безопасный Bcrypt-хэш."
 
-幕🚀 === 7. Запуск контейнеров в Docker Compose ===
+echo "🚀 === 7. Запуск контейнеров в Docker Compose ==="
 echo "🔄 Перезапуск Docker-сервисов..."
 sudo docker compose down
 # --build принудительно пересоберет Go приложение из обновленного Dockerfile
 sudo docker compose up -d --build
+
+echo "🧹 === 8. Очистка устаревших Docker-ресурсов ==="
+echo "⏳ Удаление неиспользуемых образов-сирот (<none>)..."
+# docker image prune -f удаляет ТОЛЬКО промежуточные слои и старые образы без тегов,
+# оставшиеся от предыдущих сборок. Ваши рабочие контейнеры и образы Nginx/Go не пострадают!
+sudo docker image prune -f
+
+# Опционально: выводим текущее состояние диска, чтобы вы видели свободное место
+echo "💾 Текущий баланс дискового пространства на сервере:"
+df -h / | awk 'NR==2 {print "   Доступно: " $4 " из " $2 " (Использовано: " $5 ")"}'
 
 echo "🎉 === [SUCCESS] Деплой webcam-streamer успешно завершен! ==="
 echo "📊 Посмотреть статус контейнеров: sudo docker compose ps"
