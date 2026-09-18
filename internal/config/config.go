@@ -1,3 +1,5 @@
+// Package config отвечает за чтение, парсинг и валидацию переменных окружения из .env файла.
+
 package config
 
 import (
@@ -7,6 +9,7 @@ import (
 	"strconv"
 )
 
+// Config хранит конфигурацию приложения, необходимую для работы всех слоев.
 type Config struct {
 	Port         string
 	Username     string

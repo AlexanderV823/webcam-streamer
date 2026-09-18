@@ -12,6 +12,7 @@ type RotatingFileWriter struct {
 	mu       sync.Mutex
 }
 
+// NewRotatingFileWriter инициализирует новый экземпляр RotatingFileWriter с ограничением размера.
 func NewRotatingFileWriter(filename string, maxSize int64) *RotatingFileWriter {
 	return &RotatingFileWriter{
 		filename: filename,

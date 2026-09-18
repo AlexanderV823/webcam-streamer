@@ -1,3 +1,4 @@
+// Package auth реализует логику аутентификации пользователей и генерации/валидации JWT-токенов.
 package auth
 
 import (
@@ -13,21 +14,26 @@ import (
 	"webcam-streamer/internal/config"
 )
 
+// ErrAuthFailed возвращается при неверном логине или пароле.
 var ErrAuthFailed = errors.New("authentication failed")
 
+// Usecase координирует процессы проверки прав и выпуска токенов доступа.
 type Usecase struct {
 	cfg *config.Config
 }
 
+// NewAuthUsecase создает новый экземпляр UseCase для работы с авторизацией.
 func NewAuthUsecase(cfg *config.Config) *Usecase {
 	return &Usecase{cfg: cfg}
 }
 
+// JWTClaims описывает структуру полезной нагрузки (payload) выпускаемых JWT-токенов.
 type JWTClaims struct {
 	Sub string `json:"sub"`
 	Exp int64  `json:"exp"`
 }
 
+// Login сверяет введенный пароль с сохраненным Bcrypt-хэшем и возвращает JWT-токен.
 func (u *Usecase) Login(username, password string) (string, error) {
 	if username != u.cfg.Username {
 		return "", ErrAuthFailed
@@ -56,6 +62,7 @@ func (u *Usecase) Login(username, password string) (string, error) {
 	return unsignedToken + "." + signature, nil
 }
 
+// ValidateToken выполняет полную проверку криптографической подписи JWT и срока его действия.
 func (u *Usecase) ValidateToken(token string) bool {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {

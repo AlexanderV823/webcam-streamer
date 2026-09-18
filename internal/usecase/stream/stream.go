@@ -1,3 +1,4 @@
+// Package stream управляет распределением кадров от видеоустройств к подключенным веб-слушателям.
 package stream
 
 import (
@@ -9,6 +10,7 @@ import (
 	"webcam-streamer/internal/domain"
 )
 
+// Usecase инкапсулирует логику трансляции, смены источников и пула клиентов.
 type Usecase struct {
 	cam       domain.VideoCapture
 	scanner   domain.CameraScanner
@@ -80,10 +82,12 @@ func (u *Usecase) SwitchCamera(newPath string) error {
 	return nil
 }
 
+// ListAvailableCameras запрашивает список доступных в операционной системе камер через интерфейс сканера.
 func (u *Usecase) ListAvailableCameras() ([]domain.DeviceInfo, error) {
 	return u.scanner.Scan()
 }
 
+// AddListener создает и регистрирует новый канал для отправки кадров новому веб-клиенту.
 func (u *Usecase) AddListener() chan []byte {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -92,6 +96,7 @@ func (u *Usecase) AddListener() chan []byte {
 	return ch
 }
 
+// RemoveListener безопасно удаляет и закрывает канал клиента при его отключении.
 func (u *Usecase) RemoveListener(ch chan []byte) {
 	u.mu.Lock()
 	defer u.mu.Unlock()

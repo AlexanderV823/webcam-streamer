@@ -1,3 +1,4 @@
+// Package handlers содержит контроллеры конечных точек API для обработки веб-запросов.
 package handlers
 
 import (
@@ -10,11 +11,13 @@ import (
 	"webcam-streamer/internal/usecase/stream"
 )
 
+// Handlers объединяет обработчики всех API роутов приложения.
 type Handlers struct {
 	auth   *auth.Usecase
 	stream *stream.Usecase
 }
 
+// NewHandlers создает новый экземпляр HTTP хэндлеров с необходимыми UseCase зависимостями.
 func NewHandlers(au *auth.Usecase, su *stream.Usecase) *Handlers {
 	return &Handlers{auth: au, stream: su}
 }
@@ -28,6 +31,7 @@ type switchCamReq struct {
 	CameraID string `json:"camera_id"`
 }
 
+// HandleLogin выполняет аутентификацию администратора по Bcrypt-хэшу и выдает JWT.
 func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.respondError(w, http.StatusMethodNotAllowed)
@@ -95,6 +99,7 @@ func (h *Handlers) HandleSwitchCamera(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":200,"message":"Камера успешно переключена"}`))
 }
 
+// HandleStream организует непрерывную потоковую передачу кадров MJPEG.
 func (h *Handlers) HandleStream(w http.ResponseWriter, r *http.Request) {
 	frameCh := h.stream.AddListener()
 	defer h.stream.RemoveListener(frameCh)

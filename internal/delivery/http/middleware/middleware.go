@@ -1,3 +1,4 @@
+// Package middleware содержит промежуточные обработчики HTTP-запросов (логирование, защита от атак).
 package middleware
 
 import (
@@ -13,6 +14,7 @@ import (
 	"webcam-streamer/internal/usecase/auth"
 )
 
+// Middleware объединяет все защитные и служебные прослойки веб-сервера.
 type Middleware struct {
 	authUseCase *auth.Usecase
 	ips         map[string]*rate.Limiter
@@ -20,6 +22,7 @@ type Middleware struct {
 	logWriter   io.Writer // Поток для записи логов
 }
 
+// NewMiddleware инициализирует Middleware, настраивая сквозное логирование в консоль и файл.
 func NewMiddleware(au *auth.Usecase, maxLogSize int64) *Middleware {
 	// Создаем наш ротатор для файла log.txt
 	fileWriter := NewRotatingFileWriter("log.txt", maxLogSize)
@@ -50,6 +53,7 @@ func getRealIP(r *http.Request) string {
 	return ip
 }
 
+// Logger перехватывает HTTP-запросы для ведения логов времени обработки, путей и IP-адресов.
 func (m *Middleware) Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
