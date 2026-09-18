@@ -3,7 +3,8 @@ package embed
 
 import "embed"
 
-// WebUI содержит встроенную файловую систему с index.html
+// WebUI содержит встроенную файловую систему с index.html и style.css.
+// Линтер примет маску для нескольких типов файлов.
 //
-//go:embed index.html
+//go:embed index.html style.css
 var WebUI embed.FS
