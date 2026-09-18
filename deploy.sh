@@ -33,12 +33,19 @@ echo "⚙️ === 4. Инициализация .env, определение ре
 if [ ! -f .env ]; then
     sudo cp .env.example .env
     
-    # 1. Автоматически определяем внешний IP-адрес роутера Keenetic
-    REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
-    sudo sed -i "s|^SERVER_IP=.*|SERVER_IP=$REAL_IP|" .env
-    echo "🌐 Реальный IP-адрес ($REAL_IP) определен и записан в .env"
+    # Проверяем, стоит ли флаг автоопределения IP в шаблоне
+    TEMPLATE_IP=$(grep -E "^SERVER_IP=" .env | cut -d'=' -f2-)
     
-    # 2. Генерируем случайный 32-байтовый шестнадцатеричный ключ для JWT
+    if [ "$TEMPLATE_IP" = "AUTODETECT" ]; then
+        # Автоматически определяем внешний IP-адрес роутера Keenetic
+        REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
+        sudo sed -i "s|^SERVER_IP=.*|SERVER_IP=$REAL_IP|" .env
+        echo "🌐 Реальный IP-адрес ($REAL_IP) определен и записан в .env"
+    else
+        echo "💻 В .env.example задан фиксированный IP/домен ($TEMPLATE_IP). Автоопределение пропущено."
+    fi
+    
+    # Генерируем случайный 32-байтовый шестнадцатеричный ключ для JWT
     JWT_GEN=$(openssl rand -hex 32)
     sudo sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_GEN|" .env
     echo "🔑 Уникальный криптографический JWT_SECRET успешно добавлен в .env"
@@ -47,12 +54,43 @@ else
 fi
 
 echo "📝 === 5. Интерактивная настройка параметров в nano ==="
-echo "🔔 ВНИМАНИЕ: Проверьте SERVER_IP (или укажите, например, KeenDNS) и введите ADMIN_PASSWORD_HASH."
-echo "💾 Сохранить: Ctrl+O -> Enter | ❌ Выход: Ctrl+X"
-sleep 3
+echo "--------------------------------------------------------------------------------"
+echo "💡 ПОД СКАЗКА ПО НАСТРОЙКЕ КАНАЛОВ И ОТЛАДКИ:"
+echo "1️⃣  Для локальной отладки: сотрите автоматически подставленный IP"
+echo "    в первой строчке и напишите вручную: SERVER_IP=localhost (или 127.0.0.1)."
+echo "2️⃣  Для работы за роутером: оставьте внешний IP или укажите ваш домен."
+echo "3️⃣  Обязательно введите ваш пароль в поле ADMIN_PASSWORD простым текстом."
+echo "--------------------------------------------------------------------------------"
+echo "💾 Сохранить изменения: Ctrl+O -> Нажать Enter"
+echo "❌ Выйти из редактора:   Ctrl+X"
+echo "--------------------------------------------------------------------------------"
+echo "⏳ Запуск редактора через 5 секунд..."
+sleep 5
 sudo nano .env
 
-echo "🚀 === 6. Запуск контейнеров в Docker Compose ==="
+echo "🔒 === 6. Перехват пароля и автоматическая генерация Bcrypt-хэша ==="
+ADMIN_PASS=$(grep -E "^ADMIN_PASSWORD=" .env | cut -d'=' -f2-)
+
+if [ -z "$ADMIN_PASS" ]; then
+    echo "❌ Ошибка: Вы оставили поле ADMIN_PASSWORD пустым! Деплой остановлен."
+    exit 1
+fi
+
+echo "⏳ Генерация криптографического хэша пароля..."
+BCRYPT_HASH=$(docker run --rm golang:1.25-alpine go run -e '
+package main
+import ("fmt"; "os"; "golang.org/x/crypto/bcrypt")
+func main() {
+    h, err := bcrypt.GenerateFromPassword([]byte(os.Args), 10)
+    if err != nil { os.Exit(1) }
+    fmt.Print(string(h))
+}') "$ADMIN_PASS"
+
+sudo sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD_HASH=$BCRYPT_HASH|" .env
+unset ADMIN_PASS
+echo "✅ Текстовый пароль успешно заменен на безопасный Bcrypt-хэш."
+
+幕🚀 === 7. Запуск контейнеров в Docker Compose ===
 echo "🔄 Перезапуск Docker-сервисов..."
 sudo docker compose down
 # --build принудительно пересоберет Go приложение из обновленного Dockerfile
