@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sanek Видеостример</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #e0e0e0; text-align: center; padding: 20px; margin: 0; }
+        .container { max-width: 800px; margin: 40px auto; padding: 20px; background: #1e1e1e; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        input, select { padding: 12px; margin: 8px 0; width: 100%; max-width: 300px; background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 4px; box-sizing: border-box; font-size: 14px; }
+        select { cursor: pointer; }
+        button { padding: 12px 24px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 10px; width: 100%; max-width: 300px; font-size: 14px; }
+        button:hover { background: #0056b3; }
+        #streamWrapper { display: none; margin-top: 20px; }
+        #streamView { max-width: 100%; border: 2px solid #333; border-radius: 4px; background: #000; display: block; margin: 15px auto 0 auto; }
+        .error-msg { color: #ff6b6b; margin-top: 10px; font-size: 14px; min-height: 20px; }
+        .controls { margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Мониторинг веб-камер</h2>
+        
+        <!-- Форма авторизации -->
+        <div id="loginForm">
+            <input type="text" id="username" placeholder="Логин" value="admin"><br>
+            <input type="password" id="password" placeholder="Пароль"><br>
+            <button onclick="login()">Войти и Смотреть</button>
+        </div>
+
+        <!-- Контейнер плеера и управления камерами -->
+        <div id="streamWrapper">
+            <div class="controls">
+                <label for="cameraSelect">Выберите камеру: </label>
+                <select id="cameraSelect" onchange="switchCamera(this.value)"></select>
+            </div>
+            <img id="streamView" src="" alt="Видеопоток">
+        </div>
+
+        <div id="error" class="error-msg"></div>
+    </div>
+
+    <script>
+        let token = "";
+
+        async function login() {
+            const u = document.getElementById('username').value;
+            const p = document.getElementById('password').value;
+            const errDiv = document.getElementById('error');
+            errDiv.innerText = '';
+
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: u, password: p })
+                });
+                
+                const data = await res.json();
+                
+                if (res.status === 200) {
+                    token = data.token;
+                    document.getElementById('loginForm').style.display = 'none';
+                    document.getElementById('streamWrapper').style.display = 'block';
+                    
+                    // Загружаем список камер и запускаем стандартный стрим
+                    await loadCameras();
+                    startStream();
+                } else {
+                    errDiv.innerText = data.error || 'Ошибка авторизации';
+                }
+            } catch (e) {
+                errDiv.innerText = 'Не удалось связаться с сервером';
+            }
+        }
+
+        async function loadCameras() {
+            const errDiv = document.getElementById('error');
+            try {
+                const res = await fetch('/api/cameras', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (res.status === 200) {
+                    const cameras = await res.json();
+                    const select = document.getElementById('cameraSelect');
+                    select.innerHTML = '';
+                    
+                    if(cameras && cameras.length > 0) {
+                        cameras.forEach(cam => {
+                            const opt = document.createElement('option');
+                            opt.value = cam.id;
+                            opt.textContent = cam.name;
+                            select.appendChild(opt);
+                        });
+                    } else {
+                        const opt = document.createElement('option');
+                        opt.textContent = "Камеры не найдены";
+                        select.appendChild(opt);
+                    }
+                }
+            } catch (e) {
+                errDiv.innerText = 'Не удалось загрузить список камер';
+            }
+        }
+
+        async function switchCamera(cameraId) {
+            const errDiv = document.getElementById('error');
+            errDiv.innerText = '';
+            
+            try {
+                const res = await fetch('/api/cameras/switch', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ camera_id: cameraId })
+                });
+
+                const data = await res.json();
+
+                if (res.status === 200) {
+                    // Перезапускаем поток для обновления сессии MJPEG
+                    startStream();
+                } else {
+                    errDiv.innerText = data.error || 'Не удалось переключить камеру';
+                }
+            } catch (e) {
+                errDiv.innerText = 'Ошибка сети при переключении камеры';
+            }
+        }
+
+        function startStream() {
+            const img = document.getElementById('streamView');
+            // Добавляем кэш-бастер (timestamp), чтобы браузер гарантированно обновил соединение
+            img.src = `/api/stream?token=${token}&_cb=${Date.now()}`;
+        }
+    </script>
+</body>
+</html>
