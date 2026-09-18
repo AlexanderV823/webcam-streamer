@@ -5,12 +5,13 @@ import (
 	"errors"
 	"testing"
 	"time"
-	
+
 	"webcam-streamer/internal/domain"
 )
 
 // Тестовые структуры, реализующие интерфейсы ядра
 type testCapture struct{ returnErr bool }
+
 func (tc *testCapture) Init(_ string) error { return nil }
 func (tc *testCapture) ReadFrame() ([]byte, error) {
 	if tc.returnErr {
@@ -21,6 +22,7 @@ func (tc *testCapture) ReadFrame() ([]byte, error) {
 func (tc *testCapture) Close() error { return nil }
 
 type testScanner struct{}
+
 func (ts *testScanner) Scan() ([]domain.DeviceInfo, error) {
 	return []domain.DeviceInfo{{ID: "/dev/video0", Name: "Test Cam"}}, nil
 }
@@ -28,7 +30,7 @@ func (ts *testScanner) Scan() ([]domain.DeviceInfo, error) {
 func TestStreamWithInterfaces(t *testing.T) {
 	capture := &testCapture{}
 	scanner := &testScanner{}
-	
+
 	streamUC := NewStreamUsecase(capture, scanner, "/dev/video0")
 
 	// Проверяем работу сканера через интерфейс

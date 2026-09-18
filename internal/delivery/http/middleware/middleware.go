@@ -26,10 +26,10 @@ type Middleware struct {
 func NewMiddleware(au *auth.Usecase, maxLogSize int64) *Middleware {
 	// Создаем наш ротатор для файла log.txt
 	fileWriter := NewRotatingFileWriter("log.txt", maxLogSize)
-	
+
 	// Объединяем os.Stdout (консоль) и файл log.txt в один поток
 	combinedWriter := io.MultiWriter(os.Stdout, fileWriter)
-	
+
 	// Перенаправляем системный логгер Go на наш объединенный поток
 	log.SetOutput(combinedWriter)
 
@@ -60,13 +60,13 @@ func (m *Middleware) Logger(next http.Handler) http.Handler {
 		ip := getRealIP(r)
 
 		next.ServeHTTP(w, r)
-		
+
 		// Запись автоматически запишется и в stdout, и в log.txt
-		log.Printf("[HTTP LOG] %s -- %s %s -- от IP: %s -- Заняло: %v", 
-			time.Now().Format("2006-01-02 15:04:05"), 
-			r.Method, 
-			r.URL.Path, 
-			ip, 
+		log.Printf("[HTTP LOG] %s -- %s %s -- от IP: %s -- Заняло: %v",
+			time.Now().Format("2006-01-02 15:04:05"),
+			r.Method,
+			r.URL.Path,
+			ip,
 			time.Since(start),
 		)
 	})

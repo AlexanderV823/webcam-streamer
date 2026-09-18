@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
+	"golang.org/x/crypto/bcrypt"
 	"webcam-streamer/internal/config"
 	"webcam-streamer/internal/usecase/auth"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func TestMiddleware_Logger_And_RateLimiter(t *testing.T) {
@@ -19,7 +19,7 @@ func TestMiddleware_Logger_And_RateLimiter(t *testing.T) {
 	// 1. Инициализация зависимостей
 	password := "admin_pass"
 	hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	
+
 	cfg := &config.Config{
 		Username:     "admin",
 		PasswordHash: string(hash),
@@ -27,7 +27,7 @@ func TestMiddleware_Logger_And_RateLimiter(t *testing.T) {
 	}
 
 	authUC := auth.NewAuthUsecase(cfg)
-	
+
 	// Передаем лимит логов (например, 1024 байта) в обновленный конструктор
 	mw := NewMiddleware(authUC, 1024)
 

@@ -16,9 +16,9 @@ const (
 	// v4l2BufferTypeVideoCapture указывает ядру Linux, что буфер используется для захвата видео
 	v4l2BufferTypeVideoCapture = 1
 	// vidiocStreamOn — код системного вызова ioctl для запуска трансляции с камеры
-	vidiocStreamOn             = 0x4004564a
+	vidiocStreamOn = 0x4004564a
 	// vidiocStreamOff — код системного вызова ioctl для остановки трансляции с камеры
-	vidiocStreamOff            = 0x4004564b
+	vidiocStreamOff = 0x4004564b
 )
 
 // LinuxScanner реализует интерфейс domain.CameraScanner для операционной системы Linux.
@@ -59,7 +59,7 @@ func (s *LinuxScanner) Scan() ([]domain.DeviceInfo, error) {
 			// Задаем базовое имя на случай, если sysfs не вернет красивое название
 			friendlyName := "Универсальная USB-камера (" + name + ")"
 			sysNamePath := fmt.Sprintf("/sys/class/video4linux/%s/name", name)
-			
+
 			// Пытаемся прочитать реальное коммерческое название камеры (например, Logitech) из метаданных ядра
 			if nameBytes, err := os.ReadFile(sysNamePath); err == nil {
 				friendlyName = strings.TrimSpace(string(nameBytes))
@@ -83,12 +83,12 @@ func (c *LinuxCamera) Init(path string) error {
 	if err != nil {
 		return fmt.Errorf("не удалось открыть устройство камеры %s: %w", path, err)
 	}
-	
+
 	// Оборачиваем системный дескриптор в стандартный файл Go, чтобы использовать методы Read/Close
 	c.file = os.NewFile(uintptr(fd), path)
 
 	var bufType uint32 = v4l2BufferTypeVideoCapture
-	
+
 	// Выполняем системный вызов ioctl напрямую через пакет unix
 	err = unix.IoctlSetInt(int(c.file.Fd()), vidiocStreamOn, int(uintptr(unsafe.Pointer(&bufType))))
 	if err != nil && err != unix.EBUSY {

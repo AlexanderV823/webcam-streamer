@@ -1,12 +1,11 @@
 // Package config отвечает за чтение, парсинг и валидацию переменных окружения из .env файла.
-
 package config
 
 import (
 	"errors"
 	"os"
-	"strings"
 	"strconv"
+	"strings"
 )
 
 // Config хранит конфигурацию приложения, необходимую для работы всех слоев.
@@ -40,7 +39,7 @@ func Load() (*Config, error) {
 	passwordHash := os.Getenv("ADMIN_PASSWORD_HASH")
 	jwtSecret := os.Getenv("JWT_SECRET")
 	defaultCam := getEnv("DEFAULT_CAMERA", "/dev/video0")
-	
+
 	// Читаем лимит логов из .env (в мегабайтах)
 	maxLogSizeMBStr := getEnv("MAX_LOG_SIZE_MB", "5")
 	maxLogSizeMB, err := strconv.ParseInt(maxLogSizeMBStr, 10, 64)

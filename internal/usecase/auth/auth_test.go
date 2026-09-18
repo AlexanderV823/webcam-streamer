@@ -3,9 +3,9 @@ package auth
 import (
 	"strings"
 	"testing"
-	
-	"webcam-streamer/internal/config"
+
 	"golang.org/x/crypto/bcrypt"
+	"webcam-streamer/internal/config"
 )
 
 func TestAuthUsecase(t *testing.T) {

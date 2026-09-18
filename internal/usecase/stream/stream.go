@@ -6,7 +6,7 @@ import (
 	"log"
 	"sync"
 	"time"
-	
+
 	"webcam-streamer/internal/domain"
 )
 
@@ -42,7 +42,7 @@ func (u *Usecase) StartBroadcast(ctx context.Context) {
 			u.mu.Lock()
 			frame, err := u.cam.ReadFrame()
 			u.mu.Unlock()
-			
+
 			if err != nil || len(frame) == 0 {
 				continue
 			}

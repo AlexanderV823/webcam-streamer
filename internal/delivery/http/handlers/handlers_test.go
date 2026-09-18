@@ -9,17 +9,17 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"webcam-streamer/internal/config"
 	"webcam-streamer/internal/domain"
 	"webcam-streamer/internal/usecase/auth"
 	"webcam-streamer/internal/usecase/stream"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // testCapture реализует domain.VideoCapture для использования в HTTP-тестах
 type testCapture struct{}
 
-func (tc *testCapture) Init(_ string) error      { return nil }
+func (tc *testCapture) Init(_ string) error        { return nil }
 func (tc *testCapture) ReadFrame() ([]byte, error) { return []byte{0xFF, 0xD8, 0xFF}, nil }
 func (tc *testCapture) Close() error               { return nil }
 
@@ -114,7 +114,7 @@ func TestHandleStream_Cancellation(t *testing.T) {
 	h := NewHandlers(nil, streamUC)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stream", nil)
-	
+
 	// Обертываем в контекст с возможностью отмены, чтобы прервать бесконечный MJPEG-цикл
 	ctx, cancel := context.WithCancel(context.Background())
 	req = req.WithContext(ctx)

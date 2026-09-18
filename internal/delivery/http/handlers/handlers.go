@@ -76,7 +76,6 @@ func (h *Handlers) HandleListCameras(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(devices)
 }
 
-
 // HandleSwitchCamera переключает камеру «на лету»
 func (h *Handlers) HandleSwitchCamera(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

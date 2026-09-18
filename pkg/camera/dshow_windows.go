@@ -1,8 +1,8 @@
-// Package camera предоставляет конкретные реализации интерфейсов захвата видео
-// и сканирования устройств для различных операционных систем.
-
 //go:build windows
 
+// Package camera предоставляет конкретные реализации интерфейсов захвата видео
+// и сканирования устройств для различных операционных систем.
+//
 package camera
 
 import (
@@ -41,7 +41,7 @@ func (s *WindowsScanner) Scan() ([]domain.DeviceInfo, error) {
 
 // Init открывает сессию захвата для выбранной камеры в Windows.
 // На текущем этапе функция работает как мок-заглушка для успешной локальной компиляции на Windows-машине.
-func (c *WindowsCamera) Init(path string) error {
+func (c *WindowsCamera) Init(_ string) error {
 	// Инициализация COM-компонентов и графа фильтров DirectShow будет добавлена здесь
 	return nil
 }
