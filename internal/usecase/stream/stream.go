@@ -5,21 +5,23 @@ import (
 	"log"
 	"sync"
 	"time"
-
-	"webcam-streamer/pkg/camera"
+	
+	"webcam-streamer/internal/domain"
 )
 
 type Usecase struct {
-	cam       camera.Device
+	cam       domain.VideoCapture
+	scanner   domain.CameraScanner
 	currentID string
 	listeners map[chan []byte]bool
 	mu        sync.Mutex
 }
 
-// NewStreamUsecase теперь принимает два аргумента: устройство и ID дефолтной камеры
-func NewStreamUsecase(cam camera.Device, defaultCamID string) *Usecase {
+// NewStreamUsecase теперь принимает интерфейсы бизнес-логики
+func NewStreamUsecase(cam domain.VideoCapture, scanner domain.CameraScanner, defaultCamID string) *Usecase {
 	return &Usecase{
 		cam:       cam,
+		scanner:   scanner,
 		currentID: defaultCamID,
 		listeners: make(map[chan []byte]bool),
 	}
@@ -38,7 +40,7 @@ func (u *Usecase) StartBroadcast(ctx context.Context) {
 			u.mu.Lock()
 			frame, err := u.cam.ReadFrame()
 			u.mu.Unlock()
-
+			
 			if err != nil || len(frame) == 0 {
 				continue
 			}
@@ -61,7 +63,7 @@ func (u *Usecase) SwitchCamera(newPath string) error {
 	defer u.mu.Unlock()
 
 	if u.currentID == newPath {
-		return nil // Эта камера уже активна
+		return nil
 	}
 
 	log.Printf("[STREAM] Переключение камеры с %s на %s", u.currentID, newPath)
@@ -76,6 +78,10 @@ func (u *Usecase) SwitchCamera(newPath string) error {
 
 	u.currentID = newPath
 	return nil
+}
+
+func (u *Usecase) ListAvailableCameras() ([]domain.DeviceInfo, error) {
+	return u.scanner.Scan()
 }
 
 func (u *Usecase) AddListener() chan []byte {

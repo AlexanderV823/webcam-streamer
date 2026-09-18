@@ -8,7 +8,6 @@ import (
 
 	"webcam-streamer/internal/usecase/auth"
 	"webcam-streamer/internal/usecase/stream"
-	"webcam-streamer/pkg/camera"
 )
 
 type Handlers struct {
@@ -62,7 +61,8 @@ func (h *Handlers) HandleListCameras(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	devices, err := camera.ScanDevices()
+	// Запрос идет в бизнес-логику, а не напрямую к драйверу железа
+	devices, err := h.stream.ListAvailableCameras()
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError)
 		return
@@ -71,6 +71,7 @@ func (h *Handlers) HandleListCameras(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(devices)
 }
+
 
 // HandleSwitchCamera переключает камеру «на лету»
 func (h *Handlers) HandleSwitchCamera(w http.ResponseWriter, r *http.Request) {

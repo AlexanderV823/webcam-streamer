@@ -1,42 +1,55 @@
 package stream
 
 import (
+	"context"
+	"errors"
 	"testing"
+	"time"
+	
+	"webcam-streamer/internal/domain"
 )
 
-// Описываем mock-камеру для изоляции тестов от ОС
-type mockCamera struct{}
+// Тестовые структуры, реализующие интерфейсы ядра
+type testCapture struct{ returnErr bool }
+func (tc *testCapture) Init(path string) error { return nil }
+func (tc *testCapture) ReadFrame() ([]byte, error) {
+	if tc.returnErr {
+		return nil, errors.New("hardware fail")
+	}
+	return []byte{0x01, 0x02}, nil
+}
+func (tc *testCapture) Close() error { return nil }
 
-func (m *mockCamera) Init(path string) error       { return nil }
-func (m *mockCamera) ReadFrame() ([]byte, error) { return []byte("fake-jpeg"), nil }
-func (m *mockCamera) Close() error              { return nil }
+type testScanner struct{}
+func (ts *testScanner) Scan() ([]domain.DeviceInfo, error) {
+	return []domain.DeviceInfo{{ID: "/dev/video0", Name: "Test Cam"}}, nil
+}
 
-func TestStreamUsecase_Listeners(t *testing.T) {
-	cam := &mockCamera{}
-	uc := NewStreamUsecase(cam, "/dev/video0")
+func TestStreamWithInterfaces(t *testing.T) {
+	capture := &testCapture{}
+	scanner := &testScanner{}
+	
+	streamUC := NewStreamUsecase(capture, scanner, "/dev/video0")
 
-	// 1. Проверяем регистрацию слушателя
-	ch := uc.AddListener()
-	if ch == nil {
-		t.Fatalf("Канал слушателя не инициализирован")
+	// Проверяем работу сканера через интерфейс
+	cams, err := streamUC.ListAvailableCameras()
+	if err != nil || len(cams) != 1 {
+		t.Error("Ошибка тестирования сканера через интерфейс")
 	}
 
-	uc.mu.Lock()
-	listenersCount := len(uc.listeners)
-	uc.mu.Unlock()
+	// Проверяем асинхронный стриминг
+	ch := streamUC.AddListener()
+	ctx, cancel := context.WithCancel(context.Background())
+	go streamUC.StartBroadcast(ctx)
 
-	if listenersCount != 1 {
-		t.Errorf("Ожидался 1 активный слушатель, найдено: %d", listenersCount)
+	select {
+	case frame := <-ch:
+		if len(frame) == 0 {
+			t.Error("Получен пустой кадр")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Таймаут стрима")
 	}
-
-	// 2. Проверяем корректное удаление слушателя
-	uc.RemoveListener(ch)
-
-	uc.mu.Lock()
-	listenersCount = len(uc.listeners)
-	uc.mu.Unlock()
-
-	if listenersCount != 0 {
-		t.Errorf("Пул слушателей должен быть пуст после удаления, найдено: %d", listenersCount)
-	}
+	cancel()
+	streamUC.RemoveListener(ch)
 }

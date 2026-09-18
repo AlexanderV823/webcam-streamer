@@ -21,15 +21,19 @@ import (
 func main() {
 	log.Println("[INIT] Инициализация системы видеотрансляции...")
 
-	// 1. Загрузка и строгая валидация конфигурации из .env
+	// 1. Загрузка и строгая валидация конфигурации из .env (возвращает ошибку при уязвимости)
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("[CRITICAL SECURITY ERROR] %v", err)
 	}
 
-	// 2. Автосканирование доступных физических USB-устройств в системе
+	// 2. Инициализация слоев инфраструктуры (драйверы камер, реализующие интерфейсы Domain)
+	camDevice := camera.NewCamera()   // Реализует domain.VideoCapture
+	camScanner := camera.NewScanner() // Реализует domain.CameraScanner
+
+	// 3. Автосканирование доступных физических USB-устройств в системе через экземпляр сканера
 	log.Println("[INIT] Сканирование доступных USB-веб-камер...")
-	devices, err := camera.ScanDevices()
+	devices, err := camScanner.Scan()
 	if err != nil {
 		log.Printf("[WARN] Не удалось выполнить сканирование устройств: %v", err)
 	} else {
@@ -39,30 +43,27 @@ func main() {
 		}
 	}
 
-	// 3. Инициализация слоя инфраструктуры (драйвер камеры)
-	camDevice := camera.NewCamera()
-
-	// Пробуем запустить камеру по умолчанию из конфигурации (.env)
+	// 4. Попытка запустить камеру по умолчанию из конфигурации (.env)
 	log.Printf("[INIT] Попытка активации камеры по умолчанию: %s", cfg.DefaultCam)
 	if err := camDevice.Init(cfg.DefaultCam); err != nil {
 		log.Printf("[WARN] Камера по умолчанию (%s) недоступна: %v. Ожидание выбора пользователя через UI.", cfg.DefaultCam, err)
 	}
 	defer camDevice.Close()
 
-	// 4. Инициализация бизнес-логики (Use Cases)
+	// 5. Инициализация бизнес-логики (Use Cases) с внедрением зависимостей (DI) через интерфейсы
 	authUC := auth.NewAuthUsecase(cfg)
-	streamUC := stream.NewStreamUsecase(camDevice, cfg.DefaultCam)
+	streamUC := stream.NewStreamUsecase(camDevice, camScanner, cfg.DefaultCam)
 
-	// 5. Запуск независимого конкурентного процесса захвата и вещания кадров
+	// 6. Запуск независимого конкурентного процесса захвата и вещания кадров
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go streamUC.StartBroadcast(ctx)
 
-	// 6. Инициализация слоев адаптеров доставки (HTTP и Middleware)
+	// 7. Инициализация слоев адаптеров доставки (HTTP и Middleware)
 	h := handlers.NewHandlers(authUC, streamUC)
 	mw := middleware.NewMiddleware(authUC)
 
-	// 7. Конфигурация маршрутизации (Стандартный Multiplexer Go)
+	// 8. Конфигурация маршрутизации (Стандартный Multiplexer Go)
 	mux := http.NewServeMux()
 
 	// Публичные эндпоинты с обязательной защитой от брутфорса (Rate Limiting)
@@ -79,7 +80,7 @@ func main() {
 	// Обертываем все эндпоинты в глобальный логгер входящих IP-запросов
 	siteHandler := mw.Logger(mux)
 
-	// 8. Конфигурация HTTP-сервера
+	// 9. Конфигурация HTTP-сервера
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      siteHandler,
@@ -95,7 +96,7 @@ func main() {
 		}
 	}()
 
-	// 9. Реализация Graceful Shutdown (Безопасная остановка процесса без потери данных)
+	// 10. Реализация Graceful Shutdown (Безопасная остановка процесса без потери данных)
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
