@@ -61,7 +61,7 @@ func main() {
 
 	// 7. Инициализация слоев адаптеров доставки (HTTP и Middleware)
 	h := handlers.NewHandlers(authUC, streamUC)
-	mw := middleware.NewMiddleware(authUC)
+	mw := middleware.NewMiddleware(authUC, cfg.MaxLogSize)
 
 	// 8. Конфигурация маршрутизации (Стандартный Multiplexer Go)
 	mux := http.NewServeMux()

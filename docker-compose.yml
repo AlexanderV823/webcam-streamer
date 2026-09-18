@@ -8,6 +8,7 @@ services:
     privileged: true # Предоставляет Go прямой низкоуровневый доступ к ioctl USB веб-камер
     volumes:
       - /dev:/dev # Динамический проброс системных устройств для автосканирования камер на лету
+      - ./log.txt:/app/log.txt # Пробрасываем log.txt из контейнера на хост-машину сервера
     environment:
       - SERVER_PORT=8080
       - SERVER_IP=${SERVER_IP}

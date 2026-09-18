@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -15,37 +17,52 @@ type Middleware struct {
 	authUseCase *auth.Usecase
 	ips         map[string]*rate.Limiter
 	mu          sync.Mutex
+	logWriter   io.Writer // Поток для записи логов
 }
 
-func NewMiddleware(au *auth.Usecase) *Middleware {
+func NewMiddleware(au *auth.Usecase, maxLogSize int64) *Middleware {
+	// Создаем наш ротатор для файла log.txt
+	fileWriter := NewRotatingFileWriter("log.txt", maxLogSize)
+	
+	// Объединяем os.Stdout (консоль) и файл log.txt в один поток
+	combinedWriter := io.MultiWriter(os.Stdout, fileWriter)
+	
+	// Перенаправляем системный логгер Go на наш объединенный поток
+	log.SetOutput(combinedWriter)
+
 	return &Middleware{
 		authUseCase: au,
 		ips:         make(map[string]*rate.Limiter),
+		logWriter:   combinedWriter,
 	}
 }
 
-// Logger перехватывает запросы и логирует метод, путь, входящий IP и время обработки
+func getRealIP(r *http.Request) string {
+	xForwardedFor := r.Header.Get("X-Forwarded-For")
+	if xForwardedFor != "" {
+		ips := strings.Split(xForwardedFor, ",")
+		return strings.TrimSpace(ips[0])
+	}
+	ip := r.RemoteAddr
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	return ip
+}
+
 func (m *Middleware) Logger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-
-		// Извлекаем чистый IP (учитывая возможный прокси-сервер типа Nginx)
-		ip := r.Header.Get("X-Forwarded-For")
-		if ip == "" {
-			ip = r.RemoteAddr
-			// Отсекаем порт, оставляя только IP-адрес
-			if idx := strings.LastIndex(ip, ":"); idx != -1 {
-				ip = ip[:idx]
-			}
-		}
+		ip := getRealIP(r)
 
 		next.ServeHTTP(w, r)
-
-		log.Printf("[HTTP LOG] %s -- %s %s -- от IP: %s -- Заняло: %v",
-			time.Now().Format("2006-01-02 15:04:05"),
-			r.Method,
-			r.URL.Path,
-			ip,
+		
+		// Запись автоматически запишется и в stdout, и в log.txt
+		log.Printf("[HTTP LOG] %s -- %s %s -- от IP: %s -- Заняло: %v", 
+			time.Now().Format("2006-01-02 15:04:05"), 
+			r.Method, 
+			r.URL.Path, 
+			ip, 
 			time.Since(start),
 		)
 	})
@@ -54,28 +71,18 @@ func (m *Middleware) Logger(next http.Handler) http.Handler {
 // RateLimiter защищает эндпоинты (например, /api/login) от брутфорса
 func (m *Middleware) RateLimiter(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Выделяем IP для лимитирования
-		ip := r.Header.Get("X-Forwarded-For")
-		if ip == "" {
-			ip = r.RemoteAddr
-			if idx := strings.LastIndex(ip, ":"); idx != -1 {
-				ip = ip[:idx]
-			}
-		}
+		ip := getRealIP(r)
 
 		m.mu.Lock()
 		limiter, exists := m.ips[ip]
 		if !exists {
-			// Разрешаем максимум 3 запроса в секунду с возможностью всплеска (burst) до 5 запросов
 			limiter = rate.NewLimiter(rate.Every(time.Second/3), 5)
 			m.ips[ip] = limiter
 		}
 		m.mu.Unlock()
 
 		if !limiter.Allow() {
-			// Логируем попытку брутфорса/атаки
 			log.Printf("[SECURITY WARNING] Превышен лимит запросов (Брутфорс атака?) от IP: %s на %s", ip, r.URL.Path)
-
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
 			w.Write([]byte(`{"status":429,"error":"Too Many Requests"}`))

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"strconv"
 )
 
 type Config struct {
@@ -12,6 +13,7 @@ type Config struct {
 	PasswordHash string
 	JWTSecret    string
 	DefaultCam   string
+	MaxLogSize   int64 // Размер в байтах
 }
 
 // Load считывает .env и валидирует данные, возвращая ошибку вместо жесткого падения процесса
@@ -30,14 +32,19 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// Считываем переменные окружения
-	port := getEnv("SERVER_PORT", "8080") // Для порта дефолтное значение оставить безопасно
+	port := getEnv("SERVER_PORT", "8080")
 	username := os.Getenv("ADMIN_USERNAME")
 	passwordHash := os.Getenv("ADMIN_PASSWORD_HASH")
 	jwtSecret := os.Getenv("JWT_SECRET")
-	defaultCam := getEnv("DEFAULT_CAMERA", "/dev/video0") // Для камеры тоже допустимо
+	defaultCam := getEnv("DEFAULT_CAMERA", "/dev/video0")
+	
+	// Читаем лимит логов из .env (в мегабайтах)
+	maxLogSizeMBStr := getEnv("MAX_LOG_SIZE_MB", "5")
+	maxLogSizeMB, err := strconv.ParseInt(maxLogSizeMBStr, 10, 64)
+	if err != nil || maxLogSizeMB <= 0 {
+		maxLogSizeMB = 5 // Дефолтное значение
+	}
 
-	// ЖЕСТКАЯ ПРОВЕРКА БЕЗОПАСНОСТИ: Если секреты не заданы — останавливаем приложение
 	if username == "" || passwordHash == "" || jwtSecret == "" {
 		return nil, errors.New("критические переменные окружения отсутствуют")
 	}
@@ -53,6 +60,7 @@ func Load() (*Config, error) {
 		PasswordHash: passwordHash,
 		JWTSecret:    jwtSecret,
 		DefaultCam:   defaultCam,
+		MaxLogSize:   maxLogSizeMB * 1024 * 1024, // Конвертируем в байты
 	}, nil
 }
 
