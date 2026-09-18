@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"syscall"
 	"unsafe"
 
+	"golang.org/x/sys/unix"
 	"webcam-streamer/internal/domain"
 )
 
@@ -78,21 +78,22 @@ func (s *LinuxScanner) Scan() ([]domain.DeviceInfo, error) {
 // Init открывает дескриптор файла USB-устройства в неблокирующем режиме (NONBLOCK)
 // и через ioctl передает драйверу ядра Linux (V4L2) сигнал запустить видеопоток.
 func (c *LinuxCamera) Init(path string) error {
-	// Открываем файл устройства. NONBLOCK нужен, чтобы Read не зависал, если кадр задерживается
-	f, err := os.OpenFile(path, os.O_RDWR|syscall.S_NONBLOCK, 0)
+	// Открываем устройство через unix-пакет с флагами чтения-записи и неблокирующего режима
+	fd, err := unix.Open(path, unix.O_RDWR|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return fmt.Errorf("не удалось открыть устройство камеры %s: %w", path, err)
 	}
-	c.file = f
-
-	// Отправляем команду VIDIOC_STREAMON в ядро Linux
-	var bufType uint32 = v4l2BufferTypeVideoCapture
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, c.file.Fd(), vidiocStreamOn, uintptr(unsafe.Pointer(&bufType)))
 	
-	// EBUSY означает, что камера уже стримит (например, запущена другой программой) — в данном контексте это допустимо
-	if errno != 0 && errno != syscall.EBUSY {
+	// Оборачиваем системный дескриптор в стандартный файл Go, чтобы использовать методы Read/Close
+	c.file = os.NewFile(uintptr(fd), path)
+
+	var bufType uint32 = v4l2BufferTypeVideoCapture
+	
+	// Выполняем системный вызов ioctl напрямую через пакет unix
+	err = unix.IoctlSetInt(int(c.file.Fd()), vidiocStreamOn, int(uintptr(unsafe.Pointer(&bufType))))
+	if err != nil && err != unix.EBUSY {
 		c.file.Close()
-		return fmt.Errorf("ошибка ioctl VIDIOC_STREAMON: %w", errno)
+		return fmt.Errorf("ошибка ioctl VIDIOC_STREAMON: %w", err)
 	}
 	return nil
 }
@@ -108,9 +109,8 @@ func (c *LinuxCamera) ReadFrame() ([]byte, error) {
 	buf := make([]byte, 1024*500)
 	n, err := c.file.Read(buf)
 	if err != nil {
-		// EAGAIN сигнализирует, что новый кадр на USB-шине еще просто не успел сформироваться.
-		// Это штатное поведение для неблокирующего IO, ошибкой не является.
-		if perr, ok := err.(*os.PathError); ok && perr.Err == syscall.EAGAIN {
+		// Проверяем ошибку на соответствие unix.EAGAIN (ресурс временно недоступен / кадр не готов)
+		if perr, ok := err.(*os.PathError); ok && perr.Err == unix.EAGAIN {
 			return nil, nil
 		}
 		return nil, err
@@ -122,8 +122,8 @@ func (c *LinuxCamera) ReadFrame() ([]byte, error) {
 func (c *LinuxCamera) Close() error {
 	if c.file != nil {
 		var bufType uint32 = v4l2BufferTypeVideoCapture
-		// Останавливаем стриминг на уровне драйвера
-		syscall.Syscall(syscall.SYS_IOCTL, c.file.Fd(), vidiocStreamOff, uintptr(unsafe.Pointer(&bufType)))
+		// Завершаем стрим в ядре перед закрытием файла
+		unix.IoctlSetInt(int(c.file.Fd()), vidiocStreamOff, int(uintptr(unsafe.Pointer(&bufType))))
 		return c.file.Close()
 	}
 	return nil
