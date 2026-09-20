@@ -4,7 +4,7 @@ set -e
 # === ССЫЛКИ НА ВАШ РЕПОЗИТОРИЙ GITHUB ===
 # (Замените AlexanderV823/webcam-streamer на ваш актуальный репозиторий webcam-streamer)
 REPO_RAW_URL="https://raw.githubusercontent.com/AlexanderV823/webcam-streamer/main"
-GITHUB_ARCHIVE_URL="https://github.com/AlexanderV823/webcam-streamer.git#main"
+GITHUB_ARCHIVE_URL="https://github.com/AlexanderV823/webcam-streamer/archive/refs/heads/main.tar.gz"
 SERVER_PATH="/opt/webcam-streamer"
 
 echo "🔍 === 1. Проверка системных зависимостей на сервере ==="
@@ -31,7 +31,7 @@ echo "⬇️  [3/4] .env.example загружен"
 
 # 2. Скачиваем архив всего исходного кода (включая internal, cmd, go.mod, Dockerfile)
 echo "⬇️  [4/4] Загрузка полного архива исходного кода проекта..."
-sudo curl -sSL "$GITHUB_ARCHIVE_URL" -o src.tar.gz
+sudo curl -sSL "$GITHUB_ARCHIVE_URL" -o src.tar.gz main.zip
 
 # 3. Распаковываем код в рабочую папку, стирая префикс корневой папки архива GitHub
 sudo tar -xzf src.tar.gz --strip-components=1
