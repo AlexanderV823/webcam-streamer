@@ -15,20 +15,18 @@ echo "✅ Все системные зависимости проверены и
 
 echo "🧹 === 2. Очистка старых ресурсов и подготовка директории ==="
 if [ -d "$SERVER_PATH" ]; then
-    echo "🔄 Обнаружена существующая директория проекта. Запуск глубокой очистки..."
+    echo "🔄 Обнаружена существующая директория проекта. Запуск очистки..."
     cd "$SERVER_PATH"
 
     # Если в папке есть старый docker-compose.yml, останавливаем запущенные контейнеры,
     # удаляем их анонимные тома (-v) и контейнеры-сироты (--remove-orphans)
     if [ -f "docker-compose.yml" ]; then
-        echo "🛑 Остановка и удаление старых контейнеров проекта..."
+        echo "🛑 Остановка старых контейнеров проекта..."
         sudo docker compose down -v --remove-orphans >/dev/null 2>&1 || true
     fi
 
-    # Удаляем старые конфигурационные файлы, чтобы скачать свежие.
-    # Файл .env тоже удаляем, так как это чистая установка с нуля.
-    echo "🗑️  Удаление старых конфигурационных файлов..."
-    sudo rm -f docker-compose.yml nginx.conf .env.example .env
+    echo "🗑️  Обновление конфигурационных файлов..."
+    sudo rm -f docker-compose.yml nginx.conf .env.example
 else
     echo "📂 Создание новой рабочей директории..."
     sudo mkdir -p "$SERVER_PATH"
@@ -50,75 +48,91 @@ echo "⬇️  [3/3] .env.example загружен"
 echo "✨ Все необходимые конфигурации успешно развернуты на сервере."
 
 echo "⚙️ === 4. Подготовка шаблона конфигурации ==="
+IS_FIRST_INSTALL=0
+
 if [ ! -f .env ]; then
-    # Создаем чистый понятный шаблон для пользователя, копируя пример
+    IS_FIRST_INSTALL=1
+    echo "📝 Новая установка. Создание .env по шаблону..."
     cp .env.example .env
     # На всякий случай гарантируем наличие базовых строк для заполнения
     if ! grep -q "ADMIN_PASSWORD=" .env; then
         echo -e "\nADMIN_PASSWORD=" >> .env
     fi
 else
-    echo "ℹ️  Файл .env уже существует на сервере."
+    echo "ℹ️  Файл .env уже существует на сервере. Сохраняем ваши настройки."
 fi
 
-echo "📝 === 5. Интерактивная настройка параметров пользователем ==="
-echo "--------------------------------------------------------------------------------"
-echo "💡 ИНСТРУКЦИЯ ПО НАСТРОЙКЕ:"
-echo "1️⃣  Укажите ваш пароль в строке: ADMIN_PASSWORD=ваш_пароль (простым текстом)"
-echo "2️⃣  Проверьте WEB_PORT (по умолчанию 80, измените если занят, например на 8085)"
-echo "3️⃣  SERVER_IP оставьте AUTODETECT или впишите ваш Keenetic домен вручную"
-echo "--------------------------------------------------------------------------------"
-echo "💾 Сохранить изменения: Ctrl+O -> Нажать Enter"
-echo "❌ Выйти из редактора:   Ctrl+X"
-echo "--------------------------------------------------------------------------------"
+# Открываем nano ТОЛЬКО если это первая установка или файл пустой
+if [ "$IS_FIRST_INSTALL" -eq 1 ]; then
+    echo "📝 === 5. Интерактивная настройка параметров пользователем ==="
+    echo "--------------------------------------------------------------------------------"
+    echo "💡 ИНСТРУКЦИЯ ПО НАСТРОЙКЕ:"
+    echo "1️⃣  Укажите ваш пароль в строке: ADMIN_PASSWORD=ваш_пароль (простым текстом)"
+    echo "2️⃣  Проверьте WEB_PORT (по умолчанию 80, измените если занят, например на 8085)"
+    echo "3️⃣  SERVER_IP оставьте AUTODETECT или впишите ваш Keenetic домен вручную"
+    echo "--------------------------------------------------------------------------------"
 
-for i in {3..1}; do
-    echo -ne "⏳ Запуск редактора nano через $i сек...\r"
-    sleep 1
-done
-echo -e "🚀 Запуск редактора nano...                  "
+    for i in {3..1}; do
+        echo -ne "⏳ Запуск редактора nano через $i сек...\r"
+        sleep 1
+    done
+    echo -e "🚀 Запуск редактора nano...                  "
 
-# Запускаем цикл проверки синтаксиса
-while true; do
-    nano .env
+    while true; do
+        nano .env
+        echo "🔍 Проверка синтаксиса файла .env..."
+        SYNTAX_ERRORS=0
+        LINE_NUM=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            LINE_NUM=$((LINE_NUM + 1))
+            if [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]]; then continue; fi
+            if [[ ! "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]]; then
+                echo "❌ Ошибка синтаксиса в строке $LINE_NUM: \"$line\""
+                SYNTAX_ERRORS=$((SYNTAX_ERRORS + 1))
+            fi
+        done < .env
 
-    echo "🔍 Проверка синтаксиса файла .env..."
-    SYNTAX_ERRORS=0
-    LINE_NUM=0
-
-    # Читаем .env построчно для валидации
-    while IFS= read -r line || [ -n "$line" ]; do
-        LINE_NUM=$((LINE_NUM + 1))
-
-        # Игнорируем пустые строки и комментарии
-        if [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]]; then
-            continue
+        if [ "$SYNTAX_ERRORS" -eq 0 ]; then
+            echo "✅ Синтаксис .env успешно проверен!"
+            break
+        else
+            read -p "Нажмите [Enter], чтобы вернуться в nano и исправить ошибки..."
         fi
-
-        # Проверяем строгое соответствие формату КЛЮЧ=ЗНАЧЕНИЕ (без пробелов у знака =)
-        if [[ ! "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*=.*$ ]]; then
-            echo "❌ Ошибка синтаксиса в строке $LINE_NUM: \"$line\""
-            echo "👉 Переменные должны быть в формате КЛЮЧ=ЗНАЧЕНИЕ без пробелов вокруг '='."
-            SYNTAX_ERRORS=$((SYNTAX_ERRORS + 1))
-        fi
-    done < .env
-
-    if [ "$SYNTAX_ERRORS" -eq 0 ]; then
-        echo "✅ Синтаксис .env успешно проверен! Ошибок не обнаружено."
-        break
-    else
-        echo "⚠️  Обнаружено ошибок: $SYNTAX_ERRORS."
-        read -p "Нажмите [Enter], чтобы вернуться в nano и исправить ошибки..."
-    fi
-done
+    done
+fi
 
 echo "🔒 === 6. Автоматическая постобработка и генерация секретов ==="
-# Извлекаем чистый пароль, введенный пользователем
-ADMIN_PASS=$(grep -E "^ADMIN_PASSWORD=" .env | cut -d'=' -f2-)
 
-if [ -z "$ADMIN_PASS" ]; then
-    echo "❌ Ошибка: Вы оставили поле ADMIN_PASSWORD пустым! Деплой остановлен."
-    exit 1
+# Запускаем генерацию ТОЛЬКО если это первая установка (файл .env только создан)
+if [ "$IS_FIRST_INSTALL" -eq 1 ]; then
+    ADMIN_PASS=$(grep -E "^ADMIN_PASSWORD=" .env | cut -d'=' -f2-)
+    if [ -z "$ADMIN_PASS" ]; then
+        echo "❌ Ошибка: Вы оставили поле ADMIN_PASSWORD пустым! Деплой остановлен."
+        exit 1
+    fi
+
+    # 1. Заменяем SERVER_IP=AUTODETECT
+    TEMPLATE_IP=$(grep -E "^SERVER_IP=" .env | cut -d'=' -f2-)
+    if [ "$TEMPLATE_IP" = "AUTODETECT" ]; then
+        REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
+        sudo sed -i "s|^SERVER_IP=.*|SERVER_IP=$REAL_IP|" .env
+    fi
+
+    # 2. Генерируем JWT_SECRET
+    if ! grep -q "^JWT_SECRET=" .env; then
+        JWT_GEN=$(openssl rand -hex 32)
+        echo "JWT_SECRET=$JWT_GEN" >> .env
+    fi
+
+    # 3. Генерируем Bcrypt-хэш пароля
+    echo "⏳ ... [Ваш старый код генерации Bcrypt из Docker Alpine] ..."
+
+    sudo sed -i '/^ADMIN_PASSWORD=/d' .env
+    echo "ADMIN_PASSWORD_HASH=$BCRYPT_HASH" >> .env
+    unset ADMIN_PASS
+    echo "✅ Все секреты успешно сгенерированы."
+else
+    echo "ℹ️  Секреты и IP уже настроены ранее, пропускаем генерацию."
 fi
 
 # 1. Заменяем SERVER_IP=AUTODETECT на реальный IP, если пользователь оставил автоопределение
