@@ -77,14 +77,8 @@ if [ -z "$ADMIN_PASS" ]; then
 fi
 
 echo "⏳ Генерация криптографического хэша пароля..."
-BCRYPT_HASH=$(docker run --rm golang:1.25-alpine go run -e '
-package main
-import ("fmt"; "os"; "golang.org/x/crypto/bcrypt")
-func main() {
-    h, err := bcrypt.GenerateFromPassword([]byte(os.Args[1]), 10)
-    if err != nil { os.Exit(1) }
-    fmt.Print(string(h))
-}') "$ADMIN_PASS"
+# Используем легковесный образ alpine с утилитой htpasswd
+BCRYPT_HASH=$(docker run --rm alpine:3.19 sh -c "apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '$ADMIN_PASS'" | cut -d':' -f2)
 
 # Заменяем текстовый пароль на безопасный Bcrypt-хэш
 sudo sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD_HASH=$BCRYPT_HASH|" .env
