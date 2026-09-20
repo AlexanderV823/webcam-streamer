@@ -3,7 +3,7 @@ set -e
 
 # === ССЫЛКИ НА ВАШ РЕПОЗИТОРИЙ GITHUB ===
 # (Замените AlexanderV823/webcam-streamer на ваш актуальный репозиторий webcam-streamer)
-REPO_RAW_URL="https://raw.githubusercontent.com/AlexanderV823/webcam-streamer"
+REPO_RAW_URL="https://raw.githubusercontent.com/AlexanderV823/webcam-streamer/main"
 GITHUB_ARCHIVE_URL="https://github.com/AlexanderV823/webcam-streamer"
 SERVER_PATH="/opt/webcam-streamer"
 
@@ -41,10 +41,10 @@ echo "✨ Все файлы исходного кода и конфигурац�
 echo "⚙️ === 4. Инициализация .env, определение реального IP и JWT ==="
 if [ ! -f .env ]; then
     sudo cp .env.example .env
-    
+
     # Проверяем, стоит ли флаг автоопределения IP в шаблоне
     TEMPLATE_IP=$(grep -E "^SERVER_IP=" .env | cut -d'=' -f2-)
-    
+
     if [ "$TEMPLATE_IP" = "AUTODETECT" ]; then
         # Автоматически определяем внешний IP-адрес роутера Keenetic
         REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
@@ -53,7 +53,7 @@ if [ ! -f .env ]; then
     else
         echo "💻 В .env.example задан фиксированный IP/домен ($TEMPLATE_IP). Автоопределение пропущено."
     fi
-    
+
     # Генерируем случайный 32-байтовый шестнадцатеричный ключ для JWT
     JWT_GEN=$(openssl rand -hex 32)
     sudo sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_GEN|" .env
