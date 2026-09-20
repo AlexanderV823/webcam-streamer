@@ -31,23 +31,25 @@ echo "✨ Все необходимые конфигурации успешно 
 
 echo "⚙️ === 4. Инициализация .env, определение реального IP и JWT ==="
 if [ ! -f .env ]; then
-    sudo cp .env.example .env
+    # Создаем .env с нуля
+    touch .env
 
-    # Проверяем, стоит ли флаг автоопределения IP в шаблоне
-    TEMPLATE_IP=$(grep -E "^SERVER_IP=" .env | cut -d'=' -f2-)
+    # 1. Задаем базовые параметры
+    echo "ADMIN_USERNAME=admin" >> .env
+    echo "DEFAULT_CAMERA=/dev/video0" >> .env
 
-    if [ "$TEMPLATE_IP" = "AUTODETECT" ]; then
-        # Автоматически определяем внешний IP-адрес
-        REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
-        sudo sed -i "s|^SERVER_IP=.*|SERVER_IP=$REAL_IP|" .env
-        echo "🌐 Реальный IP-адрес ($REAL_IP) определен и записан в .env"
-    else
-        echo "💻 В .env.example задан фиксированный IP/домен ($TEMPLATE_IP). Автоопределение пропущено."
-    fi
+    # Добавляем переменную внешнего порта (по умолчанию стандартный 80)
+    echo "WEB_PORT=80" >> .env
+    echo "🚪 Внешний порт по умолчанию (WEB_PORT=80) добавлен в .env"
 
-    # Генерируем случайный 32-байтовый шестнадцатеричный ключ для JWT
+    # 2. Автоматически определяем внешний IP-адрес
+    REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
+    echo "SERVER_IP=$REAL_IP" >> .env
+    echo "🌐 Реальный IP-адрес ($REAL_IP) определен и записан в .env"
+
+    # 3. Генерируем случайный 32-байтовый шестнадцатеричный ключ для JWT
     JWT_GEN=$(openssl rand -hex 32)
-    sudo sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_GEN|" .env
+    echo "JWT_SECRET=$JWT_GEN" >> .env
     echo "🔑 Уникальный криптографический JWT_SECRET успешно добавлен в .env"
 else
     echo "ℹ️  Файл .env уже существует на сервере, пропускаем автоматическое заполнение."
@@ -56,10 +58,10 @@ fi
 echo "📝 === 5. Интерактивная настройка параметров в nano ==="
 echo "--------------------------------------------------------------------------------"
 echo "💡 ПОДСКАЗКА ПО НАСТРОЙКЕ КАНАЛОВ И ОТЛАДКИ:"
-echo "1️⃣  Для локальной отладки: сотрите автоматически подставленный IP"
-echo "    в первой строчке и напишите вручную: SERVER_IP=localhost (или 127.0.0.1)."
-echo "2️⃣  Для работы за роутером: оставьте внешний IP или укажите ваш домен."
-echo "3️⃣  Обязательно введите ваш пароль в поле ADMIN_PASSWORD простым текстом."
+echo "1️⃣  Если порт 80 занят, измените строчку WEB_PORT=80 на свободный (например, 8085)."
+echo "2️⃣  Для локальной отладки: сотрите автоматически подставленный IP"
+echo "    в строчке SERVER_IP=... и напишите вручную: SERVER_IP=localhost"
+echo "3️⃣  В самом конце файла ОБЯЗАТЕЛЬНО добавьте строчку: ADMIN_PASSWORD=ваш_пароль"
 echo "--------------------------------------------------------------------------------"
 echo "💾 Сохранить изменения: Ctrl+O -> Нажать Enter"
 echo "❌ Выйти из редактора:   Ctrl+X"
@@ -69,21 +71,45 @@ sleep 5
 sudo nano .env
 
 echo "🔒 === 6. Перехват пароля и автоматическая генерация Bcrypt-хэша ==="
+# Извлекаем чистый пароль, введенный пользователем
 ADMIN_PASS=$(grep -E "^ADMIN_PASSWORD=" .env | cut -d'=' -f2-)
 
 if [ -z "$ADMIN_PASS" ]; then
-    echo "❌ Ошибка: Вы оставили поле ADMIN_PASSWORD пустым! Деплой остановлен."
+    echo "❌ Ошибка: Вы забыли добавить строчку ADMIN_PASSWORD=... в файл .env! Деплой остановлен."
     exit 1
 fi
 
 echo "⏳ Генерация криптографического хэша пароля..."
-# Используем легковесный образ alpine с утилитой htpasswd
-BCRYPT_HASH=$(docker run --rm alpine:3.19 sh -c "apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '$ADMIN_PASS'" | cut -d':' -f2)
+# Используем Docker Go, передавая переменные без участия sed
+BCRYPT_HASH=$(docker run --rm -e PASS="$ADMIN_PASS" golang:1.25-alpine go run /dev/stdin 2>/dev/null << 'EOF'
+package main
+import (
+    "fmt"
+    "os"
+    "golang.org/x/crypto/bcrypt"
+)
+func main() {
+    p := os.Getenv("PASS")
+    h, err := bcrypt.GenerateFromPassword([]byte(p), 10)
+    if err != nil { os.Exit(1) }
+    fmt.Print(string(h))
+}
+EOF
+)
 
-# Заменяем текстовый пароль на безопасный Bcrypt-хэш
-sudo sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD_HASH=$BCRYPT_HASH|" .env
+if [ -z "$BCRYPT_HASH" ]; then
+    echo "❌ Ошибка: Хэш пароля пустой. Что-то пошло не так при генерации."
+    exit 1
+fi
+
+# Полностью очищаем текстовый пароль из файла для безопасности
+sudo sed -i '/^ADMIN_PASSWORD=/d' .env
+
+# Безопасно ДОПИСЫВАЕМ хэш в конец файла обычным echo (ему не страшны спецсимволы и косые черты!)
+echo "ADMIN_PASSWORD_HASH=$BCRYPT_HASH" >> .env
+
 unset ADMIN_PASS
-echo "✅ Текстовый пароль успешно заменен на безопасный Bcrypt-хэш."
+echo "✅ Текстовый пароль успешно удален и заменен на безопасный Bcrypt-хэш в конце .env."
 
 echo "🚀 === 7. Запуск контейнеров в Docker Compose ==="
 echo "🔄 Перезапуск Docker-сервисов..."
