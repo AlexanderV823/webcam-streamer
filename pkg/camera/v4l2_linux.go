@@ -62,7 +62,7 @@ type v4l2PixFormat struct {
 // v4l2Format объединяет тип буфера и параметры формата пикселей
 type v4l2Format struct {
 	Type uint32
-	Fmt  [200]byte // Выделяем выравнивающий буфер под union структуру V4L2
+	RawData [204]byte // 204 байта под union данных формата (хватает под v4l2_pix_format с запасом)
 }
 
 // NewCamera инициализирует и возвращает Linux-реализацию интерфейса захвата видео.
@@ -113,45 +113,44 @@ func (s *LinuxScanner) Scan() ([]domain.DeviceInfo, error) {
 
 // Init открывает дескриптор файла USB-устройства и подготавливает буферы обмена ядра
 func (c *LinuxCamera) Init(path string) error {
-	// Открываем устройство через unix-пакет с флагами чтения-записи и неблокирующего режима
-	fd, err := unix.Open(path, unix.O_RDWR|unix.O_NONBLOCK, 0) //
+	fd, err := unix.Open(path, unix.O_RDWR|unix.O_NONBLOCK, 0)
 	if err != nil {
-		return fmt.Errorf("не удалось открыть устройство камеры %s: %w", path, err) //
+		return fmt.Errorf("не удалось открыть устройство камеры %s: %w", path, err)
 	}
 
-	// Оборачиваем системный дескриптор в стандартный файл Go
-	c.file = os.NewFile(uintptr(fd), path) //
+	c.file = os.NewFile(uintptr(fd), path)
 
-	// === КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Установка формата MJPEG ===
-	// Формируем FourCC код для сжатого формата MJPEG (байты 'M', 'J', 'P', 'G')
+	// Формируем FourCC код для формата MJPEG (байты 'M', 'J', 'P', 'G')
 	var mjpegFourCC uint32 = uint32('M') | uint32('J')<<8 | uint32('P')<<16 | uint32('G')<<24
 
+	// Создаем структуру формата нужного ядру размера
 	var f v4l2Format
-	f.Type = v4l2BufferTypeVideoCapture //
+	f.Type = v4l2BufferTypeVideoCapture
 
-	// Записываем структуру формата пикселей в байтовый массив union
-	pixFmt := (*v4l2PixFormat)(unsafe.Pointer(&f.Fmt[0]))
-	pixFmt.Width = 640        // Желаемое разрешение ширины (можно адаптировать под камеру)
-	pixFmt.Height = 480       // Желаемое разрешение высоты
+	// Маппим структуру пикселей прямо поверх байтового массива RawData
+	pixFmt := (*v4l2PixFormat)(unsafe.Pointer(&f.RawData[0]))
+	pixFmt.Width = 640        // Базовое стандартное разрешение
+	pixFmt.Height = 480
 	pixFmt.Pixelformat = mjpegFourCC
+	pixFmt.Field = 1          // V4L2_FIELD_NONE (прогрессивная развертка)
 
-	// Вызываем ioctl VIDIOC_S_FMT, сообщая ядру Linux, что мы хотим поток MJPEG
+	// Выполняем системный вызов установки формата пикселей
 	_, _, sysErr := unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocSFmt, uintptr(unsafe.Pointer(&f)))
 	if sysErr != 0 {
-		// Если драйвер совсем старый или не поддерживает это разрешение, логируем, но пробуем идти дальше
-		fmt.Printf("[WARN] Не удалось принудительно выставить MJPEG через ioctl (код ошибки: %v)\n", sysErr)
+		// Если конкретный драйвер не поддерживает 640x480 MJPEG, логируем системную ошибку ядра
+		fmt.Printf("[WARN] Драйвер камеры отклонил формат MJPEG ioctl: %v\n", sysErr)
+	} else {
+		fmt.Println("[SUCCESS] Драйвер V4L2 успешно переведен в режим захвата MJPEG!")
 	}
 
-	// === Запуск видеопотока ===
-	var bufType uint32 = v4l2BufferTypeVideoCapture //
-
-	// Выполняем системный вызов ioctl напрямую через пакет unix
-	err = unix.IoctlSetInt(int(c.file.Fd()), vidiocStreamOn, int(uintptr(unsafe.Pointer(&bufType)))) //
-	if err != nil && err != unix.EBUSY { //
-		c.file.Close() //
-		return fmt.Errorf("ошибка ioctl VIDIOC_STREAMON: %w", err) //
+	// Запуск видеопотока
+	var bufType uint32 = v4l2BufferTypeVideoCapture
+	err = unix.IoctlSetInt(int(c.file.Fd()), vidiocStreamOn, int(uintptr(unsafe.Pointer(&bufType))))
+	if err != nil && err != unix.EBUSY {
+		c.file.Close()
+		return fmt.Errorf("ошибка ioctl VIDIOC_STREAMON: %w", err)
 	}
-	return nil //
+	return nil
 }
 
 // ReadFrame считывает сырые байты текущего кадра из открытого файла устройства.
