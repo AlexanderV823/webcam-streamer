@@ -101,25 +101,23 @@ fi
 
 # 3. Генерируем НАСТОЯЩИЙ Bcrypt-хэш пароля
 echo "⏳ Генерация криптографического Bcrypt-хэша пароля..."
+RAW_HASH=$(docker run --rm alpine:3.19 sh -c "apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '$ADMIN_PASS'" | sed 's/^admin://' | tr -d '\r\n')
 
-# Запускаем htpasswd в контейнере alpine.
-# Используем sed с заменой 'admin:' на пустоту, чтобы получить ЧИСТЫЙ хэш без имени пользователя.
-BCRYPT_HASH=$(docker run --rm alpine:3.19 sh -c "apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '$ADMIN_PASS'" | sed 's/^admin://' | tr -d '\r\n')
-
-if [ -z "$BCRYPT_HASH" ]; then
+if [ -z "$RAW_HASH" ]; then
     echo "❌ Ошибка: Не удалось сгенерировать Bcrypt-хэш пароля."
     exit 1
 fi
 
+BCRYPT_HASH=$(echo "$RAW_HASH" | sed 's/\$/\$\$/g')
+
 # Полностью очищаем текстовый пароль из файла для безопасности
 sudo sed -i '/^ADMIN_PASSWORD=/d' .env
 
-# Безопасно ДОПИСЫВАЕМ хэш в конец файла.
-# Одинарные кавычки вокруг переменной защищают знаки доллара в Bcrypt от интерпретации Bash!
-echo 'ADMIN_PASSWORD_HASH='"$BCRYPT_HASH" >> .env
+# Дописываем экранированный хэш в .env
+echo "ADMIN_PASSWORD_HASH=$BCRYPT_HASH" >> .env
 
 unset ADMIN_PASS
-echo "✅ Текстовый пароль успешно удален и заменен на валидный Bcrypt-хэш в конце .env."
+echo "✅ Текстовый пароль успешно удален и заменен на безопасный Bcrypt-хэш в конце .env."
 
 echo "🚀 === 7. Запуск контейнеров в Docker Compose ==="
 echo "🔄 Сборка и запуск Docker-сервисов..."
@@ -138,6 +136,8 @@ sudo docker image prune -f
 # Выводим текущее состояние диска
 echo "💾 Текущий баланс дискового пространства на сервере:"
 df -h / | awk 'NR==2 {print "   Доступно: " $4 " из " $2 " (Использовано: " $5 ")"}'
+
+cd "$SERVER_PATH"
 
 echo "🎉 === [SUCCESS] Деплой webcam-streamer успешно завершен! ==="
 echo "📊 Посмотреть статус контейнеров: sudo docker compose ps"
