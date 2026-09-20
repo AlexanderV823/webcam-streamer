@@ -34,6 +34,8 @@ else
     sudo mkdir -p "$SERVER_PATH"
 fi
 
+# Делаем текущего пользователя владельцем папки
+sudo chown -R $USER:$USER "$SERVER_PATH"
 cd "$SERVER_PATH"
 echo "✅ Рабочая директория полностью очищена и готова: $SERVER_PATH"
 
@@ -47,54 +49,57 @@ sudo curl -sSLO "$REPO_RAW_URL/.env.example"
 echo "⬇️  [3/3] .env.example загружен"
 echo "✨ Все необходимые конфигурации успешно развернуты на сервере."
 
-echo "⚙️ === 4. Инициализация .env, определение реального IP и JWT ==="
+echo "⚙️ === 4. Подготовка шаблона конфигурации ==="
 if [ ! -f .env ]; then
-    # Создаем файл .env через sudo
-    sudo touch .env
-
-    # 1. Задаем базовые параметры, используя sudo tee -a для обхода ограничений прав
-    echo "ADMIN_USERNAME=admin" | sudo tee -a .env > /dev/null
-    echo "DEFAULT_CAMERA=/dev/video0" | sudo tee -a .env > /dev/null
-    echo "WEB_PORT=80" | sudo tee -a .env > /dev/null
-    echo "🚪 Внешний порт по умолчанию (WEB_PORT=80) добавлен в .env"
-
-    # 2. Автоматически определяем внешний IP-адрес
-    REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
-    echo "SERVER_IP=$REAL_IP" | sudo tee -a .env > /dev/null
-    echo "🌐 Реальный IP-адрес ($REAL_IP) определен и записан в .env"
-
-    # 3. Генерируем случайный 32-байтовый шестнадцатеричный ключ для JWT
-    JWT_GEN=$(openssl rand -hex 32)
-    echo "JWT_SECRET=$JWT_GEN" | sudo tee -a .env > /dev/null
-    echo "🔑 Уникальный криптографический JWT_SECRET успешно добавлен в .env"
+    # Создаем чистый понятный шаблон для пользователя, копируя пример
+    cp .env.example .env
+    # На всякий случай гарантируем наличие базовых строк для заполнения
+    if ! grep -q "ADMIN_PASSWORD=" .env; then
+        echo -e "\nADMIN_PASSWORD=" >> .env
+    fi
 else
-    echo "ℹ️  Файл .env уже существует на сервере, пропускаем автоматическое заполнение."
+    echo "ℹ️  Файл .env уже существует на сервере."
 fi
 
-echo "📝 === 5. Интерактивная настройка параметров в nano ==="
+echo "📝 === 5. Интерактивная настройка параметров пользователем ==="
 echo "--------------------------------------------------------------------------------"
-echo "💡 ПОДСКАЗКА ПО НАСТРОЙКЕ КАНАЛОВ И ОТЛАДКИ:"
-echo "1️⃣  Если порт 80 занят, измените строчку WEB_PORT=80 на свободный (например, 8085)."
-echo "2️⃣  Для локальной отладки: сотрите автоматически подставленный IP"
-echo "    в строчке SERVER_IP=... и напишите вручную: SERVER_IP=localhost"
-echo "3️⃣  В самом конце файла ОБЯЗАТЕЛЬНО добавьте строчку: ADMIN_PASSWORD=ваш_пароль"
+echo "💡 ИНСТРУКЦИЯ ПО НАСТРОЙКЕ:"
+echo "1️⃣  Укажите ваш пароль в строке: ADMIN_PASSWORD=ваш_пароль (простым текстом)"
+echo "2️⃣  Проверьте WEB_PORT (по умолчанию 80, измените если занят, например на 8085)"
+echo "3️⃣  SERVER_IP оставьте AUTODETECT или впишите ваш Keenetic домен вручную"
 echo "--------------------------------------------------------------------------------"
 echo "💾 Сохранить изменения: Ctrl+O -> Нажать Enter"
 echo "❌ Выйти из редактора:   Ctrl+X"
 echo "--------------------------------------------------------------------------------"
-echo "⏳ Запуск редактора через 5 секунд..."
-sleep 5
-sudo nano .env
+echo "⏳ Запуск редактора через 3 секунды..."
+sleep 3
+nano .env
 
-echo "🔒 === 6. Перехват пароля и автоматическая генерация Bcrypt-хэша ==="
+echo "🔒 === 6. Автоматическая постобработка и генерация секретов ==="
 # Извлекаем чистый пароль, введенный пользователем
 ADMIN_PASS=$(grep -E "^ADMIN_PASSWORD=" .env | cut -d'=' -f2-)
 
 if [ -z "$ADMIN_PASS" ]; then
-    echo "❌ Ошибка: Вы забыли добавить строчку ADMIN_PASSWORD=... в файл .env! Деплой остановлен."
+    echo "❌ Ошибка: Вы оставили поле ADMIN_PASSWORD пустым! Деплой остановлен."
     exit 1
 fi
 
+# 1. Заменяем SERVER_IP=AUTODETECT на реальный IP, если пользователь оставил автоопределение
+TEMPLATE_IP=$(grep -E "^SERVER_IP=" .env | cut -d'=' -f2-)
+if [ "$TEMPLATE_IP" = "AUTODETECT" ]; then
+    REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
+    sudo sed -i "s|^SERVER_IP=.*|SERVER_IP=$REAL_IP|" .env
+    echo "🌐 Реальный IP-адрес ($REAL_IP) определен и записан."
+fi
+
+# 2. Генерируем JWT_SECRET, если его еще нет в файле
+if ! grep -q "^JWT_SECRET=" .env; then
+    JWT_GEN=$(openssl rand -hex 32)
+    echo "JWT_SECRET=$JWT_GEN" >> .env
+    echo "🔑 Уникальный криптографический JWT_SECRET успешно сгенерирован и добавлен."
+fi
+
+# 3. Генерируем Bcrypt-хэш пароля
 echo "⏳ Генерация криптографического хэша пароля..."
 # Используем Docker Go, передавая переменные без участия sed
 BCRYPT_HASH=$(docker run --rm -e PASS="$ADMIN_PASS" golang:1.25-alpine go run /dev/stdin 2>/dev/null << 'EOF'
@@ -114,7 +119,7 @@ EOF
 )
 
 if [ -z "$BCRYPT_HASH" ]; then
-    echo "❌ Ошибка: Хэш пароля пустой. Что-то пошло не так при генерации."
+    echo "❌ Ошибка: Не удалось сгенерировать хэш пароля."
     exit 1
 fi
 
