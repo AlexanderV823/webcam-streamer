@@ -134,10 +134,9 @@ echo "✅ Текстовый пароль успешно удален и зам�
 echo "🚀 === 7. Запуск контейнеров в Docker Compose ==="
 echo "🔄 Сборка и запуск Docker-сервисов..."
 
-# Используем универсальный вызов сборки без кэша, совместимый со всеми версиями compose
-sudo docker compose build --pull --no-cache || sudo docker-compose build --pull --no-cache
+sudo docker compose build --pull || sudo docker-compose build --pull
 
-# Запускаем контейнеры
+# Запускаем контейнеры в фоновом режиме
 sudo docker compose up -d || sudo docker-compose up -d
 
 echo "🧹 === 8. Очистка устаревших Docker-ресурсов ==="
