@@ -15,10 +15,14 @@ import (
 const (
 	// v4l2BufferTypeVideoCapture указывает ядру Linux, что буфер используется для захвата видео
 	v4l2BufferTypeVideoCapture = 1
+	// Код для запроса буферов памяти у ядра
+	vidiocReqBufs  = 0xc0145608
 	// vidiocStreamOn — код системного вызова ioctl для запуска трансляции с камеры
 	vidiocStreamOn = 0x4004564a
 	// vidiocStreamOff — код системного вызова ioctl для остановки трансляции с камеры
 	vidiocStreamOff = 0x4004564b
+	// Указываем ядру режим обмена через Read/Write дескрипторы
+	v4l2MemoryReadwrite = 1
 )
 
 // LinuxScanner реализует интерфейс domain.CameraScanner для операционной системы Linux.
@@ -27,6 +31,14 @@ type LinuxScanner struct{}
 // LinuxCamera реализует интерфейс domain.VideoCapture для прямого взаимодействия с V4L2 без CGO.
 type LinuxCamera struct {
 	file *os.File
+}
+
+// Структура v4l2_requestbuffers для системного вызова ioctl
+type v4l2RequestBuffers struct {
+	Count    uint32 // Количество запрашиваемых буферов кадра (обычно от 1 до 4)
+	Type     uint32 // Тип (v4l2BufferTypeVideoCapture)
+	Memory   uint32 // Тип памяти (v4l2MemoryReadwrite)
+	Reserved [2]uint32
 }
 
 // NewCamera инициализирует и возвращает Linux-реализацию интерфейса захвата видео.
@@ -75,21 +87,31 @@ func (s *LinuxScanner) Scan() ([]domain.DeviceInfo, error) {
 	return devices, nil
 }
 
-// Init открывает дескриптор файла USB-устройства в неблокирующем режиме (NONBLOCK)
-// и через ioctl передает драйверу ядра Linux (V4L2) сигнал запустить видеопоток.
+// Init открывает дескриптор файла USB-устройства и подготавливает буферы обмена ядра
 func (c *LinuxCamera) Init(path string) error {
-	// Открываем устройство через unix-пакет с флагами чтения-записи и неблокирующего режима
 	fd, err := unix.Open(path, unix.O_RDWR|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return fmt.Errorf("не удалось открыть устройство камеры %s: %w", path, err)
 	}
 
-	// Оборачиваем системный дескриптор в стандартный файл Go, чтобы использовать методы Read/Close
 	c.file = os.NewFile(uintptr(fd), path)
 
-	var bufType uint32 = v4l2BufferTypeVideoCapture
+	// === КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Шаг 1. Запрос буферов памяти ===
+	reqBuf := v4l2RequestBuffers{
+		Count:  1, // Для простого последовательного чтения Read() достаточно 1 буфера
+		Type:   v4l2BufferTypeVideoCapture,
+		Memory: v4l2MemoryReadwrite,
+	}
 
-	// Выполняем системный вызов ioctl напрямую через пакет unix
+	// Вызываем REQBUFS, чтобы ядро выделило память под этот тип обмена
+	_, _, sysErr := unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocReqBufs, uintptr(unsafe.Pointer(&reqBuf)))
+	if sysErr != 0 && sysErr != unix.EINVAL { // Некоторые драйверы могут выдать EINVAL, если не поддерживают ReadWrite метод
+		c.file.Close()
+		return fmt.Errorf("ошибка ioctl VIDIOC_REQBUFS (камера возможно не поддерживает простой метод чтения Read): %v", sysErr)
+	}
+
+	// === Шаг 2. Запуск видеопотока ===
+	var bufType uint32 = v4l2BufferTypeVideoCapture
 	err = unix.IoctlSetInt(int(c.file.Fd()), vidiocStreamOn, int(uintptr(unsafe.Pointer(&bufType))))
 	if err != nil && err != unix.EBUSY {
 		c.file.Close()
