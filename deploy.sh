@@ -134,9 +134,11 @@ echo "✅ Текстовый пароль успешно удален и зам�
 echo "🚀 === 7. Запуск контейнеров в Docker Compose ==="
 echo "🔄 Сборка и запуск Docker-сервисов..."
 
-# 1. Удален лишний 'docker compose down'
-# 2. Добавлен флаг '--no-cache', чтобы Docker гарантированно скачал свежий код из GitHub
-sudo docker compose up -d --build --no-cache
+# 1. Сначала принудительно собираем образ из удаленного репозитория GitHub без кэша
+sudo docker compose build --no-cache
+
+# 2. Затем запускаем собранные контейнеры в фоновом режиме
+sudo docker compose up -d
 
 echo "🧹 === 8. Очистка устаревших Docker-ресурсов ==="
 echo "⏳ Удаление неиспользуемых образов-сирот (<none>)..."
