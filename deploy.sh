@@ -99,37 +99,27 @@ if ! grep -q "^JWT_SECRET=" .env; then
     echo "🔑 Уникальный криптографический JWT_SECRET успешно сгенерирован и добавлен."
 fi
 
-# 3. Генерируем Bcrypt-хэш пароля с помощью Python
-echo "⏳ Генерация криптографического хэша пароля..."
+# 3. Генерируем НАСТОЯЩИЙ Bcrypt-хэш пароля
+echo "⏳ Генерация криптографического Bcrypt-хэша пароля..."
 
-# Проверяем наличие bcrypt в python, если нет — используем стандартный способ или ставим его
-BCRYPT_HASH=$(python3 -c "
-import os
-try:
-    import bcrypt
-    print(bcrypt.hashpw(os.environ['PASS'].encode(), bcrypt.gensalt()).decode())
-except ImportError:
-    # Альтернативный вариант через встроенный crypt (может генерировать SHA-512 хэш, если bcrypt недоступен)
-    # Но для полной совместимости с вашим Go-приложением мы используем надежный docker-однострочник с htpasswd, который точно сработает:
-    import subprocess
-    cmd = \"docker run --rm alpine:3.19 sh -c 'apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '\" + os.environ['PASS']
-    res = subprocess.check_output(cmd, shell=True).decode().strip()
-    print(res.split(':')[1])
-" 2>/dev/null || docker run --rm alpine:3.19 sh -c "apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '$ADMIN_PASS'" | cut -d':' -f2)
+# Запускаем htpasswd в контейнере alpine.
+# Используем sed с заменой 'admin:' на пустоту, чтобы получить ЧИСТЫЙ хэш без имени пользователя.
+BCRYPT_HASH=$(docker run --rm alpine:3.19 sh -c "apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '$ADMIN_PASS'" | sed 's/^admin://' | tr -d '\r\n')
 
 if [ -z "$BCRYPT_HASH" ]; then
-    echo "❌ Ошибка: Не удалось сгенерировать хэш пароля."
+    echo "❌ Ошибка: Не удалось сгенерировать Bcrypt-хэш пароля."
     exit 1
 fi
 
 # Полностью очищаем текстовый пароль из файла для безопасности
 sudo sed -i '/^ADMIN_PASSWORD=/d' .env
 
-# Безопасно ДОПИСЫВАЕМ хэш в конец файла обычным echo
-echo "ADMIN_PASSWORD_HASH=$BCRYPT_HASH" >> .env
+# Безопасно ДОПИСЫВАЕМ хэш в конец файла.
+# Одинарные кавычки вокруг переменной защищают знаки доллара в Bcrypt от интерпретации Bash!
+echo 'ADMIN_PASSWORD_HASH='"$BCRYPT_HASH" >> .env
 
 unset ADMIN_PASS
-echo "✅ Текстовый пароль успешно удален и заменен на безопасный Bcrypt-хэш в конце .env."
+echo "✅ Текстовый пароль успешно удален и заменен на валидный Bcrypt-хэш в конце .env."
 
 echo "🚀 === 7. Запуск контейнеров в Docker Compose ==="
 echo "🔄 Сборка и запуск Docker-сервисов..."
