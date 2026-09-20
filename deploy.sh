@@ -49,25 +49,23 @@ echo "✨ Все необходимые конфигурации успешно 
 
 echo "⚙️ === 4. Инициализация .env, определение реального IP и JWT ==="
 if [ ! -f .env ]; then
-    # Создаем .env с нуля
-    touch .env
+    # Создаем файл .env через sudo
+    sudo touch .env
 
-    # 1. Задаем базовые параметры
-    echo "ADMIN_USERNAME=admin" >> .env
-    echo "DEFAULT_CAMERA=/dev/video0" >> .env
-
-    # Добавляем переменную внешнего порта (по умолчанию стандартный 80)
-    echo "WEB_PORT=80" >> .env
+    # 1. Задаем базовые параметры, используя sudo tee -a для обхода ограничений прав
+    echo "ADMIN_USERNAME=admin" | sudo tee -a .env > /dev/null
+    echo "DEFAULT_CAMERA=/dev/video0" | sudo tee -a .env > /dev/null
+    echo "WEB_PORT=80" | sudo tee -a .env > /dev/null
     echo "🚪 Внешний порт по умолчанию (WEB_PORT=80) добавлен в .env"
 
     # 2. Автоматически определяем внешний IP-адрес
     REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
-    echo "SERVER_IP=$REAL_IP" >> .env
+    echo "SERVER_IP=$REAL_IP" | sudo tee -a .env > /dev/null
     echo "🌐 Реальный IP-адрес ($REAL_IP) определен и записан в .env"
 
     # 3. Генерируем случайный 32-байтовый шестнадцатеричный ключ для JWT
     JWT_GEN=$(openssl rand -hex 32)
-    echo "JWT_SECRET=$JWT_GEN" >> .env
+    echo "JWT_SECRET=$JWT_GEN" | sudo tee -a .env > /dev/null
     echo "🔑 Уникальный криптографический JWT_SECRET успешно добавлен в .env"
 else
     echo "ℹ️  Файл .env уже существует на сервере, пропускаем автоматическое заполнение."
