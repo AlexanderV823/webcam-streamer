@@ -99,24 +99,23 @@ if ! grep -q "^JWT_SECRET=" .env; then
     echo "🔑 Уникальный криптографический JWT_SECRET успешно сгенерирован и добавлен."
 fi
 
-# 3. Генерируем Bcrypt-хэш пароля
+# 3. Генерируем Bcrypt-хэш пароля с помощью Python
 echo "⏳ Генерация криптографического хэша пароля..."
-# Используем Docker Go, передавая переменные без участия sed
-BCRYPT_HASH=$(docker run --rm -e PASS="$ADMIN_PASS" golang:1.25-alpine go run /dev/stdin 2>/dev/null << 'EOF'
-package main
-import (
-    "fmt"
-    "os"
-    "golang.org/x/crypto/bcrypt"
-)
-func main() {
-    p := os.Getenv("PASS")
-    h, err := bcrypt.GenerateFromPassword([]byte(p), 10)
-    if err != nil { os.Exit(1) }
-    fmt.Print(string(h))
-}
-EOF
-)
+
+# Проверяем наличие bcrypt в python, если нет — используем стандартный способ или ставим его
+BCRYPT_HASH=$(python3 -c "
+import os
+try:
+    import bcrypt
+    print(bcrypt.hashpw(os.environ['PASS'].encode(), bcrypt.gensalt()).decode())
+except ImportError:
+    # Альтернативный вариант через встроенный crypt (может генерировать SHA-512 хэш, если bcrypt недоступен)
+    # Но для полной совместимости с вашим Go-приложением мы используем надежный docker-однострочник с htpasswd, который точно сработает:
+    import subprocess
+    cmd = \"docker run --rm alpine:3.19 sh -c 'apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '\" + os.environ['PASS']
+    res = subprocess.check_output(cmd, shell=True).decode().strip()
+    print(res.split(':')[1])
+" 2>/dev/null || docker run --rm alpine:3.19 sh -c "apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '$ADMIN_PASS'" | cut -d':' -f2)
 
 if [ -z "$BCRYPT_HASH" ]; then
     echo "❌ Ошибка: Не удалось сгенерировать хэш пароля."
@@ -126,7 +125,7 @@ fi
 # Полностью очищаем текстовый пароль из файла для безопасности
 sudo sed -i '/^ADMIN_PASSWORD=/d' .env
 
-# Безопасно ДОПИСЫВАЕМ хэш в конец файла обычным echo (ему не страшны спецсимволы и косые черты!)
+# Безопасно ДОПИСЫВАЕМ хэш в конец файла обычным echo
 echo "ADMIN_PASSWORD_HASH=$BCRYPT_HASH" >> .env
 
 unset ADMIN_PASS
