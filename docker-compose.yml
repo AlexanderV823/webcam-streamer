@@ -33,6 +33,7 @@ services:
       - "${WEB_PORT}:80" # Внешний порт теперь берется из переменной WEB_PORT в .env
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro # Пробрасываем папку с сертификатами
     depends_on:
       - app
     logging:

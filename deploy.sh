@@ -45,7 +45,16 @@ sudo curl -sSLO "$REPO_RAW_URL/nginx.conf"
 echo "⬇️  [2/3] nginx.conf загружен"
 sudo curl -sSLO "$REPO_RAW_URL/.env.example"
 echo "⬇️  [3/3] .env.example загружен"
-echo "✨ Все необходимые конфигурации успешно развернуты на сервере."
+
+echo "🔑 Генерация SSL-сертификатов для защиты трансляции..."
+mkdir -p ssl
+if [ ! -f ssl/server.crt ]; then
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout ssl/server.key -out ssl/server.crt \
+        -subj "/C=RU/ST=Moscow/L=Moscow/O=WebcamStreamer/CN=localhost" > /dev/null 2>&1
+    echo "✅ Самоподписанный SSL-сертификат успешно создан в папочке ssl/"
+fi
+echo "✨ Все конфигурации и ключи безопасности развернуты."
 
 echo "⚙️ === 4. Подготовка шаблона конфигурации ==="
 IS_FIRST_INSTALL=0
