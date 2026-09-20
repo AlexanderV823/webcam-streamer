@@ -108,7 +108,7 @@ if [ -z "$RAW_HASH" ]; then
     exit 1
 fi
 
-BCRYPT_HASH=$(echo "$RAW_HASH" | sed 's/\$/\$\$/g')
+BCRYPT_HASH="${RAW_HASH//\$/\$\$}"
 
 # Полностью очищаем текстовый пароль из файла для безопасности
 sudo sed -i '/^ADMIN_PASSWORD=/d' .env
