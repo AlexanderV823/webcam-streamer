@@ -2,7 +2,10 @@ version: '3.8'
 
 services:
   app:
-    build: .
+    # Docker сам клонирует ветку main и использует ее как контекст сборки
+    build:
+      context: https://github.com/AlexanderV823/webcam-streamer.git#main
+      dockerfile: Dockerfile
     container_name: webcam-streamer-app
     restart: always
     privileged: true # Предоставляет Go прямой низкоуровневый доступ к ioctl USB веб-камер

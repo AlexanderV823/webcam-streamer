@@ -4,7 +4,6 @@ set -e
 # === ССЫЛКИ НА ВАШ РЕПОЗИТОРИЙ GITHUB ===
 # (Замените AlexanderV823/webcam-streamer на ваш актуальный репозиторий webcam-streamer)
 REPO_RAW_URL="https://raw.githubusercontent.com/AlexanderV823/webcam-streamer/main"
-GITHUB_ARCHIVE_URL="https://github.com/AlexanderV823/webcam-streamer/archive/refs/heads/main.tar.gz"
 SERVER_PATH="/opt/webcam-streamer"
 
 echo "🔍 === 1. Проверка системных зависимостей на сервере ==="
@@ -20,23 +19,15 @@ sudo mkdir -p "$SERVER_PATH"
 cd "$SERVER_PATH"
 echo "📂 Рабочая директория готова: $SERVER_PATH"
 
-echo "🛜 === 3. Скачивание исходного кода и конфигураций с GitHub ==="
-# 1. Скачиваем конфигурации оркестрации и прокси, которые должны лежать в корне
+echo "🛜 === 3. Скачивание конфигураций с GitHub ==="
+# Скачиваем ТОЛЬКО конфигурации оркестрации и прокси. Исходный код скачает сам Docker.
 sudo curl -sSLO "$REPO_RAW_URL/docker-compose.yml"
-echo "⬇️  [1/4] docker-compose.yml загружен"
+echo "⬇️  [1/3] docker-compose.yml загружен"
 sudo curl -sSLO "$REPO_RAW_URL/nginx.conf"
-echo "⬇️  [2/4] nginx.conf загружен"
+echo "⬇️  [2/3] nginx.conf загружен"
 sudo curl -sSLO "$REPO_RAW_URL/.env.example"
-echo "⬇️  [3/4] .env.example загружен"
-
-# 2. Скачиваем архив всего исходного кода (включая internal, cmd, go.mod, Dockerfile)
-echo "⬇️  [4/4] Загрузка полного архива исходного кода проекта..."
-sudo curl -sSL "$GITHUB_ARCHIVE_URL" -o src.tar.gz main.zip
-
-# 3. Распаковываем код в рабочую папку, стирая префикс корневой папки архива GitHub
-sudo tar -xzf src.tar.gz --strip-components=1
-sudo rm src.tar.gz
-echo "✨ Все файлы исходного кода и конфигурации успешно развернуты на сервере."
+echo "⬇️  [3/3] .env.example загружен"
+echo "✨ Все необходимые конфигурации успешно развернуты на сервере."
 
 echo "⚙️ === 4. Инициализация .env, определение реального IP и JWT ==="
 if [ ! -f .env ]; then
@@ -46,7 +37,7 @@ if [ ! -f .env ]; then
     TEMPLATE_IP=$(grep -E "^SERVER_IP=" .env | cut -d'=' -f2-)
 
     if [ "$TEMPLATE_IP" = "AUTODETECT" ]; then
-        # Автоматически определяем внешний IP-адрес роутера Keenetic
+        # Автоматически определяем внешний IP-адрес
         REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
         sudo sed -i "s|^SERVER_IP=.*|SERVER_IP=$REAL_IP|" .env
         echo "🌐 Реальный IP-адрес ($REAL_IP) определен и записан в .env"
@@ -103,7 +94,7 @@ echo "✅ Текстовый пароль успешно заменен на б�
 echo "🚀 === 7. Запуск контейнеров в Docker Compose ==="
 echo "🔄 Перезапуск Docker-сервисов..."
 sudo docker compose down
-# --build принудительно пересоберет Go приложение из распакованного исходного кода
+# Docker автоматически скачает актуальный код ветки main с GitHub и соберет его
 sudo docker compose up -d --build
 
 echo "🧹 === 8. Очистка устаревших Docker-ресурсов ==="
