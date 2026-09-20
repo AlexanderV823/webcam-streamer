@@ -103,72 +103,49 @@ fi
 
 echo "🔒 === 6. Автоматическая постобработка и генерация секретов ==="
 
-# Запускаем генерацию ТОЛЬКО если это первая установка (файл .env только создан)
-if [ "$IS_FIRST_INSTALL" -eq 1 ]; then
-    ADMIN_PASS=$(grep -E "^ADMIN_PASSWORD=" .env | cut -d'=' -f2-)
-    if [ -z "$ADMIN_PASS" ]; then
-        echo "❌ Ошибка: Вы оставили поле ADMIN_PASSWORD пустым! Деплой остановлен."
+# 1. Проверяем, задан ли текстовый пароль.
+# Если строки ADMIN_PASSWORD нет или она пустая, значит это повторный деплой и пароль уже захеширован.
+ADMIN_PASS=$(grep -E "^ADMIN_PASSWORD=" .env | cut -d'=' -f2- | tr -d '\r\n ')
+
+if [ -n "$ADMIN_PASS" ]; then
+    echo "⏳ Обнаружен текстовый пароль. Генерация криптографического Bcrypt-хэша..."
+
+    # Генерируем чистый хэш через Docker Alpine
+    RAW_HASH=$(docker run --rm alpine:3.19 sh -c "apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '$ADMIN_PASS'" | sed 's/^admin://' | tr -d '\r\n')
+
+    if [ -z "$RAW_HASH" ]; then
+        echo "❌ Ошибка: Не удалось сгенерировать Bcrypt-хэш пароля."
         exit 1
     fi
 
-    # 1. Заменяем SERVER_IP=AUTODETECT
-    TEMPLATE_IP=$(grep -E "^SERVER_IP=" .env | cut -d'=' -f2-)
-    if [ "$TEMPLATE_IP" = "AUTODETECT" ]; then
-        REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
-        sudo sed -i "s|^SERVER_IP=.*|SERVER_IP=$REAL_IP|" .env
-    fi
+    # Удваиваем знаки доллара для корректной работы Docker Compose при чтении .env
+    BCRYPT_HASH="${RAW_HASH//\$/\$\$}"
 
-    # 2. Генерируем JWT_SECRET
-    if ! grep -q "^JWT_SECRET=" .env; then
-        JWT_GEN=$(openssl rand -hex 32)
-        echo "JWT_SECRET=$JWT_GEN" >> .env
-    fi
-
-    # 3. Генерируем Bcrypt-хэш пароля
-    echo "⏳ ... [Ваш старый код генерации Bcrypt из Docker Alpine] ..."
-
+    # Удаляем текстовый пароль и старый хэш (если он был), чтобы избежать дублирования
     sudo sed -i '/^ADMIN_PASSWORD=/d' .env
+    sudo sed -i '/^ADMIN_PASSWORD_HASH=/d' .env
+
+    # Дописываем свежий заэкранированный хэш в конец файла
     echo "ADMIN_PASSWORD_HASH=$BCRYPT_HASH" >> .env
+    echo "✅ Текстовый пароль успешно заменен на безопасный Bcrypt-хэш."
     unset ADMIN_PASS
-    echo "✅ Все секреты успешно сгенерированы."
 else
-    echo "ℹ️  Секреты и IP уже настроены ранее, пропускаем генерацию."
+    echo "ℹ️  Текстовый пароль не найден. Используется существующий ADMIN_PASSWORD_HASH."
 fi
 
-# 1. Заменяем SERVER_IP=AUTODETECT на реальный IP, если пользователь оставил автоопределение
-TEMPLATE_IP=$(grep -E "^SERVER_IP=" .env | cut -d'=' -f2-)
-if [ "$TEMPLATE_IP" = "AUTODETECT" ]; then
+# 2. Заменяем SERVER_IP=AUTODETECT на реальный IP, если это еще не было сделано ранее
+if grep -q "SERVER_IP=AUTODETECT" .env; then
     REAL_IP=$(curl -s ifconfig.me || echo "127.0.0.1")
     sudo sed -i "s|^SERVER_IP=.*|SERVER_IP=$REAL_IP|" .env
-    echo "🌐 Реальный IP-адрес ($REAL_IP) определен и записан."
+    echo "🌐 Реальный IP-адрес ($REAL_IP) определен и зафиксирован в .env."
 fi
 
-# 2. Генерируем JWT_SECRET, если его еще нет в файле
+# 3. Генерируем JWT_SECRET, только если его вообще нет в файле
 if ! grep -q "^JWT_SECRET=" .env; then
     JWT_GEN=$(openssl rand -hex 32)
     echo "JWT_SECRET=$JWT_GEN" >> .env
     echo "🔑 Уникальный криптографический JWT_SECRET успешно сгенерирован и добавлен."
 fi
-
-# 3. Генерируем НАСТОЯЩИЙ Bcrypt-хэш пароля
-echo "⏳ Генерация криптографического Bcrypt-хэша пароля..."
-RAW_HASH=$(docker run --rm alpine:3.19 sh -c "apk add --no-cache apache2-utils >/dev/null && htpasswd -B -n -b admin '$ADMIN_PASS'" | sed 's/^admin://' | tr -d '\r\n')
-
-if [ -z "$RAW_HASH" ]; then
-    echo "❌ Ошибка: Не удалось сгенерировать Bcrypt-хэш пароля."
-    exit 1
-fi
-
-BCRYPT_HASH="${RAW_HASH//\$/\$\$}"
-
-# Полностью очищаем текстовый пароль из файла для безопасности
-sudo sed -i '/^ADMIN_PASSWORD=/d' .env
-
-# Дописываем экранированный хэш в .env
-echo "ADMIN_PASSWORD_HASH=$BCRYPT_HASH" >> .env
-
-unset ADMIN_PASS
-echo "✅ Текстовый пароль успешно удален и заменен на безопасный Bcrypt-хэш в конце .env."
 
 echo "🚀 === 7. Запуск контейнеров в Docker Compose ==="
 echo "🔄 Сборка и запуск Docker-сервисов..."
