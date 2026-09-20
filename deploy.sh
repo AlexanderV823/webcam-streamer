@@ -133,10 +133,11 @@ unset ADMIN_PASS
 echo "✅ Текстовый пароль успешно удален и заменен на безопасный Bcrypt-хэш в конце .env."
 
 echo "🚀 === 7. Запуск контейнеров в Docker Compose ==="
-echo "🔄 Перезапуск Docker-сервисов..."
-sudo docker compose down
-# Docker автоматически скачает актуальный код ветки main с GitHub и соберет его
-sudo docker compose up -d --build
+echo "🔄 Сборка и запуск Docker-сервисов..."
+
+# 1. Удален лишний 'docker compose down'
+# 2. Добавлен флаг '--no-cache', чтобы Docker гарантированно скачал свежий код из GitHub
+sudo docker compose up -d --build --no-cache
 
 echo "🧹 === 8. Очистка устаревших Docker-ресурсов ==="
 echo "⏳ Удаление неиспользуемых образов-сирот (<none>)..."
