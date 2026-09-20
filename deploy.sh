@@ -4,7 +4,7 @@ set -e
 # === ССЫЛКИ НА ВАШ РЕПОЗИТОРИЙ GITHUB ===
 # (Замените AlexanderV823/webcam-streamer на ваш актуальный репозиторий webcam-streamer)
 REPO_RAW_URL="https://raw.githubusercontent.com/AlexanderV823/webcam-streamer/main"
-GITHUB_ARCHIVE_URL="https://github.com/AlexanderV823/webcam-streamer"
+GITHUB_ARCHIVE_URL="https://github.com/AlexanderV823/webcam-streamer.git#main"
 SERVER_PATH="/opt/webcam-streamer"
 
 echo "🔍 === 1. Проверка системных зависимостей на сервере ==="
