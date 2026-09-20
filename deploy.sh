@@ -11,13 +11,31 @@ command -v curl >/dev/null 2>&1 || (echo "📥 Установка curl..." && su
 command -v docker >/dev/null 2>&1 || (echo "🐳 Установка Docker..." && curl -fsSL https://get.docker.com | sh)
 command -v openssl >/dev/null 2>&1 || (echo "🔑 Установка OpenSSL..." && sudo apt-get update && sudo apt-get install -y openssl)
 command -v nano >/dev/null 2>&1 || (echo "📝 Установка nano..." && sudo apt-get update && sudo apt-get install -y nano)
-command -v tar >/dev/null 2>&1 || (echo "📦 Установка tar..." && sudo apt-get update && sudo apt-get install -y tar)
 echo "✅ Все системные зависимости проверены и установлены."
 
-echo "📂 === 2. Подготовка рабочей директории ==="
-sudo mkdir -p "$SERVER_PATH"
+echo "🧹 === 2. Очистка старых ресурсов и подготовка директории ==="
+if [ -d "$SERVER_PATH" ]; then
+    echo "🔄 Обнаружена существующая директория проекта. Запуск глубокой очистки..."
+    cd "$SERVER_PATH"
+
+    # Если в папке есть старый docker-compose.yml, останавливаем запущенные контейнеры,
+    # удаляем их анонимные тома (-v) и контейнеры-сироты (--remove-orphans)
+    if [ -f "docker-compose.yml" ]; then
+        echo "🛑 Остановка и удаление старых контейнеров проекта..."
+        sudo docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+    fi
+
+    # Удаляем старые конфигурационные файлы, чтобы скачать свежие.
+    # Файл .env тоже удаляем, так как это чистая установка с нуля.
+    echo "🗑️  Удаление старых конфигурационных файлов..."
+    sudo rm -f docker-compose.yml nginx.conf .env.example .env
+else
+    echo "📂 Создание новой рабочей директории..."
+    sudo mkdir -p "$SERVER_PATH"
+fi
+
 cd "$SERVER_PATH"
-echo "📂 Рабочая директория готова: $SERVER_PATH"
+echo "✅ Рабочая директория полностью очищена и готова: $SERVER_PATH"
 
 echo "🛜 === 3. Скачивание конфигураций с GitHub ==="
 # Скачиваем ТОЛЬКО конфигурации оркестрации и прокси. Исходный код скачает сам Docker.
