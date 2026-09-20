@@ -171,7 +171,7 @@ GOTOOLCHAIN=local go test -vet=off -cover ./...
 Подключитесь к вашему серверу по SSH и выполните следующую связку команд (замените URL на ваш актуальный репозиторий):
 
 ```bash
-curl -sSLO https://raw.githubusercontent.com/AlexanderV823/webcam-streamer && chmod +x deploy.sh && ./deploy.sh
+curl -sSLO https://raw.githubusercontent.com/AlexanderV823/webcam-streamer/main/deploy.sh && chmod +x deploy.sh && ./deploy.sh
 ```
 
 ### 📊 Управление и мониторинг
