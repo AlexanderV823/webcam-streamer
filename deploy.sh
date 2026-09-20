@@ -179,3 +179,5 @@ cd "$SERVER_PATH"
 echo "🎉 === [SUCCESS] Деплой webcam-streamer успешно завершен! ==="
 echo "📊 Посмотреть статус контейнеров: sudo docker compose ps"
 echo "📜 Посмотреть логи трансляции:    sudo docker compose logs -f"
+
+exec bash
