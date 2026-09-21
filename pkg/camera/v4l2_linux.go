@@ -20,19 +20,19 @@ const (
 	// v4l2BufferTypeVideoCapture указывает ядру, что буфер используется для захвата видеопотока
 	v4l2BufferTypeVideoCapture = 1
 	// v4l2MemoryMmap задает режим потокового обмена через проецирование памяти ядра (Memory Mapping)
-	v4l2MemoryMmap             = 1
+	v4l2MemoryMmap = 1
 	// vidiocSFmt (Set Format) устанавливает геометрию кадра (разрешение) и кодек (FourCC код) в драйвере
-	vidiocSFmt      = 0xc0cc5605
+	vidiocSFmt = 0xc0cc5605
 	// vidiocReqBufs (Request Buffers) запрашивает у ядра выделение определенного количества буферов под кадры
-	vidiocReqBufs   = 0xc0145608
+	vidiocReqBufs = 0xc0145608
 	// vidiocQueryBuf запрашивает параметры буфера (размер и смещение в памяти ядра) для последующего mmap
-	vidiocQueryBuf  = 0xc0445609
+	vidiocQueryBuf = 0xc0445609
 	// vidiocQBuf (Queue Buffer) отправляет пустой буфер в очередь ядра, разрешая камере записывать туда новый кадр
-	vidiocQBuf      = 0xc044560f
+	vidiocQBuf = 0xc044560f
 	// vidiocDQBuf (Dequeue Buffer) извлекает из очереди ядра буфер, который уже заполнен свежими данными кадра
-	vidiocDQBuf     = 0xc0445611
+	vidiocDQBuf = 0xc0445611
 	// vidiocStreamOn запускает генерацию видеопотока и захват кадров на физическом сенсоре камеры
-	vidiocStreamOn  = 0x4004564a
+	vidiocStreamOn = 0x4004564a
 	// vidiocStreamOff останавливает генерацию видеопотока на камере
 	vidiocStreamOff = 0x4004564b
 	// Указываем ядру режим обмена через Read/Write дескрипторы
@@ -107,8 +107,9 @@ type v4l2PixFormat struct {
 
 // v4l2Format объединяет тип буфера и параметры формата пикселей
 type v4l2Format struct {
-	Type    uint32
-	RawData [228]byte
+	Type uint32
+	fmt  v4l2PixFormat
+	pad  [200 - unsafe.Sizeof(v4l2PixFormat{})]byte
 }
 
 // NewCamera инициализирует и возвращает Linux-реализацию интерфейса захвата видео.
@@ -161,20 +162,17 @@ func (c *LinuxCamera) Init(path string) error {
 	// Меняем FourCC код с MJPG на YUYV (0x56595559)
 	var yuyvFourCC uint32 = uint32('Y') | uint32('U')<<8 | uint32('Y')<<16 | uint32('V')<<24
 	var f v4l2Format
+
 	f.Type = v4l2BufferTypeVideoCapture
+	f.fmt.Width = uint32(c.width)
+	f.fmt.Height = uint32(c.height)
+	f.fmt.Pixelformat = yuyvFourCC
+	f.fmt.Field = 1 // V4L2_FIELD_NONE
 
-	c.width = 640
-	c.height = 480
-
-	pixFmt := (*v4l2PixFormat)(unsafe.Pointer(&f.RawData[0]))
-	pixFmt.Width = uint32(c.width)
-	pixFmt.Height = uint32(c.height)
-	pixFmt.Pixelformat = yuyvFourCC
-	pixFmt.Field = 1 // V4L2_FIELD_NONE
-
+	// Системный вызов ioctl теперь получит идеально выровненную структуру
 	_, _, sysErr := unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocSFmt, uintptr(unsafe.Pointer(&f)))
 	if sysErr != 0 {
-		return fmt.Errorf("драйвер камеры отклонил формат YUYV: %v", sysErr)
+		return fmt.Errorf("драйвер камеры отклонил формат YUYV системной ошибкой ядра: %v", sysErr)
 	}
 
 	// 2. Запрос буферов (REQBUFS) у ядра Linux (запрашиваем 4 буфера для плавности)
@@ -312,9 +310,9 @@ func convertYuyvToJpeg(yuyv []byte, width, height int) ([]byte, error) {
 
 	for i := 0; i < bounds && idx < width*height; i += 4 {
 		y0 := float64(yuyv[i])
-		u  := float64(yuyv[i+1]) - 128
+		u := float64(yuyv[i+1]) - 128
 		y1 := float64(yuyv[i+2]) - 128
-		v  := float64(yuyv[i+3]) - 128
+		v := float64(yuyv[i+3]) - 128
 
 		// Пиксель 1
 		r0 := y0 + 1.402*v
@@ -348,7 +346,11 @@ func convertYuyvToJpeg(yuyv []byte, width, height int) ([]byte, error) {
 }
 
 func clamp(v float64) float64 {
-	if v < 0 { return 0 }
-	if v > 255 { return 255 }
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
 	return v
 }
