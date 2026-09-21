@@ -1,5 +1,5 @@
 services:
-  app:
+  webcam-stream-app:
     # Docker сам клонирует ветку main и использует ее как контекст сборки
     build:
       context: https://github.com/AlexanderV823/webcam-streamer.git#main
@@ -7,6 +7,10 @@ services:
     container_name: webcam-streamer-app
     restart: always
     privileged: true # Предоставляет Go прямой низкоуровневый доступ к ioctl USB веб-камер
+    user: "root"
+    devices:
+      - "/dev/video0:/dev/video0"
+      - "/dev/video1:/dev/video1"
     volumes:
       - /dev:/dev # Динамический проброс системных устройств для автосканирования камер на лету
       - ./log.txt:/app/log.txt # Пробрасываем log.txt из контейнера на хост-машину сервера
@@ -35,7 +39,7 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./ssl:/etc/nginx/ssl:ro # Пробрасываем папку с сертификатами
     depends_on:
-      - app
+      - webcam-stream-app
     logging:
       driver: "json-file"
       options:
