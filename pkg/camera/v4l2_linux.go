@@ -155,61 +155,90 @@ func (s *LinuxScanner) Scan() ([]domain.DeviceInfo, error) {
 
 // Init открывает устройство, настраивает формат, запрашивает MMAP буферы и запускает стрим
 func (c *LinuxCamera) Init(path string) error {
-	fd, err := unix.Open(path, unix.O_RDWR, 0) // Открываем строго в блокирующем режиме
-	if err != nil {
-		return fmt.Errorf("не удалось открыть устройство камеры %s: %w", path, err)
+	// Создаем список нод для проверки. Если упала /dev/video0, приложение автоматически проверит /dev/video1
+	nodesToTry := []string{path}
+	if path == "/dev/video0" {
+		nodesToTry = append(nodesToTry, "/dev/video1")
+	} else if path == "/dev/video1" {
+		nodesToTry = append(nodesToTry, "/dev/video0")
 	}
-	c.file = os.NewFile(uintptr(fd), path)
 
-	// 1. Инициализация и получение текущего формата камеры из ядра Linux
+	var fd int
+	var err error
+	var activePath string
+	var sysErr unix.Errno
 	var f v4l2Format
-	f.Type = v4l2BufferTypeVideoCapture
 
-	// Сначала принудительно запрашиваем у драйвера текущую конфигурацию,
-	// чтобы заполнить системные поля (Colorspace, BytesPerLine, SizeImage)
-	_, _, sysErr := unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocGFmt, uintptr(unsafe.Pointer(&f)))
-	if sysErr != 0 {
-		fmt.Printf("[WARN] Драйвер камеры отказался отдать текущий формат (vidiocGFmt): %v\n", sysErr)
+	// Цикл автоматического перебора нод видеозахвата
+	for _, node := range nodesToTry {
+		fmt.Printf("[INIT] Попытка инициализации ноды устройства: %s...\n", node)
+		fd, err = unix.Open(node, unix.O_RDWR, 0)
+		if err != nil {
+			fmt.Printf("[WARN] Не удалось открыть файл устройства %s: %v\n", node, err)
+			continue
+		}
+		c.file = os.NewFile(uintptr(fd), node)
+		activePath = node
+
+		// Сбрасываем и подготавливаем структуру формата под YUYV
+		f = v4l2Format{}
+		f.Type = v4l2BufferTypeVideoCapture
+		var yuyvFourCC uint32 = uint32('Y') | uint32('U')<<8 | uint32('Y')<<16 | uint32('V')<<24
+		c.width = 640
+		c.height = 480
+
+		f.fmt.Width = uint32(c.width)
+		f.fmt.Height = uint32(c.height)
+		f.fmt.Pixelformat = yuyvFourCC
+		f.fmt.Field = 1 // V4L2_FIELD_NONE
+
+		// Проверяем, принимает ли драйвер на этой ноде ioctl установки формата
+		_, _, sysErr = unix.Syscall6(
+			unix.SYS_IOCTL,
+			c.file.Fd(),
+			uintptr(vidiocSFmt),
+			uintptr(unsafe.Pointer(&f)),
+			0, 0, 0,
+		)
+
+		if sysErr == 0 {
+			fmt.Printf("[SUCCESS] Найдена рабочая видео-нода: %s! Переходим к выделению буферов.\n", node)
+			break
+		}
+
+		// Если нода не подошла, закрываем дескриптор и пробуем следующую
+		fmt.Printf("[WARN] Нода %s отклонила формат YUYV (ioctl error: %v). Пробуем альтернативу...\n", node, sysErr)
+		c.file.Close()
+		c.file = nil
 	}
 
-	// Переопределяем только кодек и разрешение под YUYV
-	var yuyvFourCC uint32 = uint32('Y') | uint32('U')<<8 | uint32('Y')<<16 | uint32('V')<<24
-	c.width = 640
-	c.height = 480
-
-	f.fmt.Width = uint32(c.width)
-	f.fmt.Height = uint32(c.height)
-	f.fmt.Pixelformat = yuyvFourCC
-	f.fmt.Field = 1 // V4L2_FIELD_NONE
-
-	// Записываем обновленный формат обратно в драйвер веб-камеры
-	_, _, sysErr = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocSFmt, uintptr(unsafe.Pointer(&f)))
-	if sysErr != 0 {
-		return fmt.Errorf("драйвер камеры отклонил формат YUYV системной ошибкой ядра: %v", sysErr)
+	// Если ни одна из нод не ответила успехом на ioctl
+	if c.file == nil {
+		return fmt.Errorf("все доступные ноды камер (%v) отклонили формат YUYV (последняя ошибка: %v)", nodesToTry, sysErr)
 	}
 
-	// 2. Запрос буферов (REQBUFS) у ядра Linux (запрашиваем 4 буфера для плавности)
+	// 2. Запрос буферов (REQBUFS) у ядра Linux (используем уже успешно открытый c.file)
 	var reqBufs v4l2RequestBuffers
 	reqBufs.Count = 4
 	reqBufs.Type = v4l2BufferTypeVideoCapture
 	reqBufs.Memory = v4l2MemoryMmap
 
-	_, _, sysErr = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocReqBufs, uintptr(unsafe.Pointer(&reqBufs)))
+	_, _, sysErr = unix.Syscall6(unix.SYS_IOCTL, c.file.Fd(), uintptr(vidiocReqBufs), uintptr(unsafe.Pointer(&reqBufs)), 0, 0, 0)
 	if sysErr != 0 {
 		c.Close()
-		return fmt.Errorf("ошибка ioctl VIDIOC_REQBUFS: %v", sysErr)
+		return fmt.Errorf("ошибка ioctl VIDIOC_REQBUFS на устройстве %s: %v", activePath, sysErr)
 	}
 
 	c.buffers = make([]LocalBuffer, reqBufs.Count)
 
-	// 3. Проекция памяти ядра в Go (QUERYBUF + MMAP) и заполнение начальной очереди
+	// 3. Проекция памяти ядра в Go (QUERYBUF + MMAP)
 	for i := uint32(0); i < reqBufs.Count; i++ {
 		var buf v4l2Buffer
 		buf.Index = i
 		buf.Type = v4l2BufferTypeVideoCapture
 		buf.Memory = v4l2MemoryMmap
 
-		_, _, sysErr = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocQueryBuf, uintptr(unsafe.Pointer(&buf)))
+		_, _, sysErr = unix.Syscall6(unix.SYS_IOCTL, c.file.Fd(), uintptr(vidiocQueryBuf), uintptr(unsafe.Pointer(&buf)), 0, 0, 0)
 		if sysErr != 0 {
 			c.Close()
 			return fmt.Errorf("ошибка ioctl VIDIOC_QUERYBUF для буфера %d: %v", i, sysErr)
@@ -223,8 +252,7 @@ func (c *LinuxCamera) Init(path string) error {
 		}
 		c.buffers[i] = LocalBuffer{Slice: mmapSlice}
 
-		// Сразу же отправляем пустой буфер в очередь ядра, чтобы оно могло начать его заполнять
-		_, _, sysErr = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocQBuf, uintptr(unsafe.Pointer(&buf)))
+		_, _, sysErr = unix.Syscall6(unix.SYS_IOCTL, c.file.Fd(), uintptr(vidiocQBuf), uintptr(unsafe.Pointer(&buf)), 0, 0, 0)
 		if sysErr != 0 {
 			c.Close()
 			return fmt.Errorf("ошибка ioctl VIDIOC_QBUF для буфера %d: %v", i, sysErr)
@@ -233,18 +261,19 @@ func (c *LinuxCamera) Init(path string) error {
 
 	// 4. Запуск трансляции в ядре (STREAMON)
 	var bufType uint32 = v4l2BufferTypeVideoCapture
-	_, _, sysErr = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocStreamOn, uintptr(unsafe.Pointer(&bufType)))
+	_, _, sysErr = unix.Syscall6(unix.SYS_IOCTL, c.file.Fd(), uintptr(vidiocStreamOn), uintptr(unsafe.Pointer(&bufType)), 0, 0, 0)
 	if sysErr != 0 && sysErr != unix.EBUSY {
 		c.Close()
 		return fmt.Errorf("ошибка ioctl VIDIOC_STREAMON: %v", sysErr)
 	}
 
+	// Переводим дескриптор в неблокирующий режим для стабильного чтения кадров
 	flags, err := unix.FcntlInt(c.file.Fd(), unix.F_GETFL, 0)
 	if err == nil {
 		_, _ = unix.FcntlInt(c.file.Fd(), unix.F_SETFL, flags|unix.O_NONBLOCK)
 	}
 
-	fmt.Println("[SUCCESS] Драйвер V4L2 MMAP (YUYV) успешно инициализирован и запущен!")
+	fmt.Printf("[SUCCESS] Драйвер V4L2 успешно инициализировал трансляцию на устройстве %s!\n", activePath)
 	return nil
 }
 
