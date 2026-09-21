@@ -41,12 +41,16 @@ func NewMiddleware(au *auth.Usecase, maxLogSize int64) *Middleware {
 }
 
 func getRealIP(r *http.Request) string {
-	xForwardedFor := r.Header.Get("X-Forwarded-For")
-	if xForwardedFor != "" {
-		ips := strings.Split(xForwardedFor, ",")
-		return strings.TrimSpace(ips[0])
+	// 1. Первым делом смотрим на заголовок, который жестко прописан в Nginx.
+	// Nginx берет его из сетевого соединения ($remote_addr), хакер не может его подделать.
+	ip := r.Header.Get("X-Real-IP")
+	if ip != "" {
+		return strings.TrimSpace(ip)
 	}
-	ip := r.RemoteAddr
+
+	// 2. Если X-Real-IP пустой (например, запустили Go-приложение локально без Nginx),
+	// откатываемся на базовый RemoteAddr дескриптора.
+	ip = r.RemoteAddr
 	if idx := strings.LastIndex(ip, ":"); idx != -1 {
 		ip = ip[:idx]
 	}
