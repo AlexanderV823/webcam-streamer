@@ -108,7 +108,7 @@ type v4l2PixFormat struct {
 // v4l2Format объединяет тип буфера и параметры формата пикселей
 type v4l2Format struct {
 	Type    uint32
-	RawData [204]byte
+	RawData [228]byte
 }
 
 // NewCamera инициализирует и возвращает Linux-реализацию интерфейса захвата видео.
