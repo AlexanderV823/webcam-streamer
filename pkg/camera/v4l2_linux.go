@@ -22,7 +22,7 @@ const (
 	// v4l2MemoryMmap задает режим потокового обмена через проецирование памяти ядра (Memory Mapping)
 	v4l2MemoryMmap = 1
 	// vidiocSFmt (Set Format) устанавливает геометрию кадра (разрешение) и кодек (FourCC код) в драйвере
-	vidiocSFmt = 0xc0cc5605
+	vidiocSFmt = 0xc0e85605
 	// vidiocReqBufs (Request Buffers) запрашивает у ядра выделение определенного количества буферов под кадры
 	vidiocReqBufs = 0xc0145608
 	// vidiocQueryBuf запрашивает параметры буфера (размер и смещение в памяти ядра) для последующего mmap
