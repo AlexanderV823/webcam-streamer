@@ -192,6 +192,12 @@ func (c *LinuxCamera) Init(path string) error {
 		f.fmt.Pixelformat = yuyvFourCC
 		f.fmt.Field = 1 // V4L2_FIELD_NONE
 
+		// === ДОБАВЛЯЕМ КРИТИЧЕСКИЕ ПАРАМЕТРЫ ДЛЯ YUYV ===
+		f.fmt.BytesPerLine = uint32(c.width * 2)       // 640 пикселей * 2 байта = 1280 байт на строку
+		f.fmt.SizeImage = uint32(c.width * c.height * 2) // Полный размер кадра = 614400 байт
+		f.fmt.Colorspace = 1                             // V4L2_COLORSPACE_SRGB (дефолтное цветовое пространство)
+		// ===============================================
+
 		// Проверяем, принимает ли драйвер на этой ноде ioctl установки формата
 		_, _, sysErr = unix.Syscall6(
 			unix.SYS_IOCTL,
