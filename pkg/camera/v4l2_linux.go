@@ -37,6 +37,8 @@ const (
 	vidiocStreamOff = 0x4004564b
 	// Указываем ядру режим обмена через Read/Write дескрипторы
 	v4l2MemoryReadwrite = 1
+	// vidiocGFmt - команда чтения формата ядра Linux (Get Format)
+	vidiocGFmt = 0xc0e85604
 )
 
 // LinuxScanner реализует интерфейс domain.CameraScanner для операционной системы Linux.
@@ -159,18 +161,29 @@ func (c *LinuxCamera) Init(path string) error {
 	}
 	c.file = os.NewFile(uintptr(fd), path)
 
-	// Меняем FourCC код с MJPG на YUYV (0x56595559)
-	var yuyvFourCC uint32 = uint32('Y') | uint32('U')<<8 | uint32('Y')<<16 | uint32('V')<<24
+	// 1. Инициализация и получение текущего формата камеры из ядра Linux
 	var f v4l2Format
-
 	f.Type = v4l2BufferTypeVideoCapture
+
+	// Сначала принудительно запрашиваем у драйвера текущую конфигурацию,
+	// чтобы заполнить системные поля (Colorspace, BytesPerLine, SizeImage)
+	_, _, sysErr := unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocGFmt, uintptr(unsafe.Pointer(&f)))
+	if sysErr != 0 {
+		fmt.Printf("[WARN] Драйвер камеры отказался отдать текущий формат (vidiocGFmt): %v\n", sysErr)
+	}
+
+	// Переопределяем только кодек и разрешение под YUYV
+	var yuyvFourCC uint32 = uint32('Y') | uint32('U')<<8 | uint32('Y')<<16 | uint32('V')<<24
+	c.width = 640
+	c.height = 480
+
 	f.fmt.Width = uint32(c.width)
 	f.fmt.Height = uint32(c.height)
 	f.fmt.Pixelformat = yuyvFourCC
 	f.fmt.Field = 1 // V4L2_FIELD_NONE
 
-	// Системный вызов ioctl теперь получит идеально выровненную структуру
-	_, _, sysErr := unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocSFmt, uintptr(unsafe.Pointer(&f)))
+	// Записываем обновленный формат обратно в драйвер веб-камеры
+	_, _, sysErr = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocSFmt, uintptr(unsafe.Pointer(&f)))
 	if sysErr != 0 {
 		return fmt.Errorf("драйвер камеры отклонил формат YUYV системной ошибкой ядра: %v", sysErr)
 	}
