@@ -155,7 +155,7 @@ func (s *LinuxScanner) Scan() ([]domain.DeviceInfo, error) {
 
 // Init открывает устройство, настраивает формат, запрашивает MMAP буферы и запускает стрим
 func (c *LinuxCamera) Init(path string) error {
-	fd, err := unix.Open(path, unix.O_RDWR|unix.O_NONBLOCK, 0)
+	fd, err := unix.Open(path, unix.O_RDWR, 0) // Открываем строго в блокирующем режиме
 	if err != nil {
 		return fmt.Errorf("не удалось открыть устройство камеры %s: %w", path, err)
 	}
@@ -237,6 +237,11 @@ func (c *LinuxCamera) Init(path string) error {
 	if sysErr != 0 && sysErr != unix.EBUSY {
 		c.Close()
 		return fmt.Errorf("ошибка ioctl VIDIOC_STREAMON: %v", sysErr)
+	}
+
+	flags, err := unix.FcntlInt(c.file.Fd(), unix.F_GETFL, 0)
+	if err == nil {
+		_, _ = unix.FcntlInt(c.file.Fd(), unix.F_SETFL, flags|unix.O_NONBLOCK)
 	}
 
 	fmt.Println("[SUCCESS] Драйвер V4L2 MMAP (YUYV) успешно инициализирован и запущен!")
