@@ -3,7 +3,11 @@
 package camera
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
 	"os"
 	"strings"
 	"unsafe"
@@ -46,6 +50,8 @@ type LocalBuffer struct {
 type LinuxCamera struct {
 	file    *os.File
 	buffers []LocalBuffer
+	width   int
+	height  int
 }
 
 // Структура v4l2_requestbuffers для запроса буферов у ядра
@@ -152,23 +158,23 @@ func (c *LinuxCamera) Init(path string) error {
 	}
 	c.file = os.NewFile(uintptr(fd), path)
 
-	// 1. Установка формата MJPEG
-	var mjpegFourCC uint32 = uint32('M') | uint32('J')<<8 | uint32('P')<<16 | uint32('G')<<24
+	// Меняем FourCC код с MJPG на YUYV (0x56595559)
+	var yuyvFourCC uint32 = uint32('Y') | uint32('U')<<8 | uint32('Y')<<16 | uint32('V')<<24
 	var f v4l2Format
 	f.Type = v4l2BufferTypeVideoCapture
 
-	// Маппим структуру пикселей прямо поверх байтового массива RawData
-	pixFmt := (*v4l2PixFormat)(unsafe.Pointer(&f.RawData[0]))
-	pixFmt.Width = 640        // Базовое стандартное разрешение
-	pixFmt.Height = 480
-	pixFmt.Pixelformat = mjpegFourCC
-	pixFmt.Field = 1          // V4L2_FIELD_NONE (прогрессивная развертка)
+	c.width = 640
+	c.height = 480
 
-	// Выполняем системный вызов установки формата пикселей
+	pixFmt := (*v4l2PixFormat)(unsafe.Pointer(&f.RawData[0]))
+	pixFmt.Width = uint32(c.width)
+	pixFmt.Height = uint32(c.height)
+	pixFmt.Pixelformat = yuyvFourCC
+	pixFmt.Field = 1 // V4L2_FIELD_NONE
+
 	_, _, sysErr := unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocSFmt, uintptr(unsafe.Pointer(&f)))
 	if sysErr != 0 {
-		// Если конкретный драйвер не поддерживает 640x480 MJPEG, логируем системную ошибку ядра
-		fmt.Printf("[WARN] Драйвер камеры отклонил формат MJPEG ioctl: %v\n", sysErr)
+		return fmt.Errorf("драйвер камеры отклонил формат YUYV: %v", sysErr)
 	}
 
 	// 2. Запрос буферов (REQBUFS) у ядра Linux (запрашиваем 4 буфера для плавности)
@@ -222,11 +228,11 @@ func (c *LinuxCamera) Init(path string) error {
 		return fmt.Errorf("ошибка ioctl VIDIOC_STREAMON: %v", sysErr)
 	}
 
-	fmt.Println("[SUCCESS] Драйвер V4L2 MMAP успешно инициализирован и запущен!")
+	fmt.Println("[SUCCESS] Драйвер V4L2 MMAP (YUYV) успешно инициализирован и запущен!")
 	return nil
 }
 
-// ReadFrame забирает готовый кадр из очереди ядра, копирует данные и возвращает буфер обратно
+// ReadFrame забирает готовый кадр из очереди ядра, конвертирует YUYV в JPEG и возвращает буфер обратно
 func (c *LinuxCamera) ReadFrame() ([]byte, error) {
 	if c.file == nil || len(c.buffers) == 0 {
 		return nil, fmt.Errorf("камера не инициализирована")
@@ -248,21 +254,27 @@ func (c *LinuxCamera) ReadFrame() ([]byte, error) {
 
 	// Безопасно извлекаем индекс буфера, который заполнило ядро
 	if buf.Index >= uint32(len(c.buffers)) {
-		return nil, fmt.Errorf("ядро вернуло недопустимый индекс буфера: %d", buf.Index)
+		return nil, fmt.Errorf("некорректный индекс буфера от ядра: %d", buf.Index)
 	}
 
-	// 2. Копируем байты кадра из промаппированной памяти ядра в новый срез Go.
-	// Это критично, так как этот буфер мы сейчас сразу же вернем ядру под запись следующего кадра.
-	frameData := make([]byte, buf.BytesUsed)
-	copy(frameData, c.buffers[buf.Index].Slice[:buf.BytesUsed])
+	// Извлекаем сырые YUYV байты
+	rawYuyv := c.buffers[buf.Index].Slice[:buf.BytesUsed]
 
-	// 3. Возвращаем буфер обратно в очередь ядра (QBUF), чтобы камера могла писать туда снова
+	// Конвертируем сырой YUYV поток в сжатый JPEG на лету
+	jpegBytes, err := convertYuyvToJpeg(rawYuyv, c.width, c.height)
+	if err != nil {
+		// Возвращаем буфер обратно ядру даже в случае ошибки конвертации (исправлен возврат до 3 значений)
+		_, _, _ = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocQBuf, uintptr(unsafe.Pointer(&buf)))
+		return nil, fmt.Errorf("ошибка конвертации кадра YUYV->JPEG: %w", err)
+	}
+
+	// Возвращаем буфер обратно в очередь ядра (исправлено с 2 переменных до 3)
 	_, _, sysErr = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocQBuf, uintptr(unsafe.Pointer(&buf)))
 	if sysErr != 0 {
-		return nil, fmt.Errorf("ошибка возврата буфера в очередь VIDIOC_QBUF: %v", sysErr)
+		return nil, fmt.Errorf("ошибка ioctl VIDIOC_QBUF при возврате буфера: %v", sysErr)
 	}
 
-	return frameData, nil
+	return jpegBytes, nil
 }
 
 // Close останавливает поток в ядре, делает Munmap для всех буферов и закрывает дескриптор файла
@@ -287,4 +299,56 @@ func (c *LinuxCamera) Close() error {
 	err := c.file.Close()
 	c.file = nil
 	return err
+}
+
+// convertYuyvToJpeg распаковывает YUYV макропикселей в RGB и сжатия в JPEG
+func convertYuyvToJpeg(yuyv []byte, width, height int) ([]byte, error) {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+
+	// В YUYV каждые 4 байта кодируют 2 пикселя: [Y0, U, Y1, V]
+	// Y0 - яркость пикселя 1, Y1 - яркость пикселя 2. U и V - общие цветовые компоненты
+	bounds := len(yuyv) - 3
+	idx := 0
+
+	for i := 0; i < bounds && idx < width*height; i += 4 {
+		y0 := float64(yuyv[i])
+		u  := float64(yuyv[i+1]) - 128
+		y1 := float64(yuyv[i+2]) - 128
+		v  := float64(yuyv[i+3]) - 128
+
+		// Пиксель 1
+		r0 := y0 + 1.402*v
+		g0 := y0 - 0.344136*u - 0.714136*v
+		b0 := y0 + 1.772*u
+
+		// Пиксель 2
+		r1 := y1 + 1.402*v
+		g1 := y1 - 0.344136*u - 0.714136*v
+		b1 := y1 + 1.772*u
+
+		// Записываем Пиксель 1 в сетку RGBA
+		x0 := idx % width
+		ptY0 := idx / width
+		img.Set(x0, ptY0, color.RGBA{uint8(clamp(r0)), uint8(clamp(g0)), uint8(clamp(b0)), 255})
+		idx++
+
+		// Записываем Пиксель 2 в сетку RGBA
+		x1 := idx % width
+		ptY1 := idx / width
+		img.Set(x1, ptY1, color.RGBA{uint8(clamp(r1)), uint8(clamp(g1)), uint8(clamp(b1)), 255})
+		idx++
+	}
+
+	var buf bytes.Buffer
+	// Сжимаем RGBA в JPEG с качеством 80% (оптимально для баланса нагрузка/качество)
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func clamp(v float64) float64 {
+	if v < 0 { return 0 }
+	if v > 255 { return 255 }
+	return v
 }
