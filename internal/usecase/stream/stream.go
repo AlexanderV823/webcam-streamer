@@ -122,10 +122,11 @@ func (u *Usecase) AddListener() chan []byte {
 	return ch
 }
 
-// RemoveListener безопасно удаляет канал клиента при его отключении.
+// RemoveListener безопасно удаляет и закрывает канал клиента при его отключении.
 func (u *Usecase) RemoveListener(ch chan []byte) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
 	delete(u.listeners, ch)
+	close(ch)
 }
