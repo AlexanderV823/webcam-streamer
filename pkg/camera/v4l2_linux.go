@@ -115,20 +115,21 @@ func (c *LinuxCamera) Init(path string) error {
 	return nil
 }
 
-// ReadFrame забирает готовый кадр из библиотеки, конвертирует YUYV в JPEG и возвращает буфер
+// ReadFrame забирает готовый кадр из библиотеки, конвертирует YUYV в JPEG и очищает буфер
 func (c *LinuxCamera) ReadFrame() ([]byte, error) {
 	if c.cam == nil {
 		return nil, fmt.Errorf("камера не инициализирована")
 	}
 
-	// Ожидаем готовности кадра от ядра (блокирующий вызов)
-	err := c.cam.WaitForFrame(1) // таймаут 1 секунда
+	// Ожидаем готовности кадра от ядра (таймаут 1 секунда)
+	err := c.cam.WaitForFrame(1)
 	if err != nil {
-		// Если кадр еще не готов, возвращаем nil без ошибки (аналог EAGAIN)
-		return nil, nil
+		return nil, nil // аналог EAGAIN (кадр еще не готов)
 	}
 
-	// Читаем сырые байты YUYV из памяти ядра
+	// 1. Запрашиваем у ядра указатель на текущий заполненный буфер
+	// ВНИМАНИЕ: Название метода зависит от точной версии форка библиотеки blackjack.
+	// Обычно это cam.ReadFrame(), который блокирует буфер до вызова ReleaseFrame.
 	rawYuyv, err := c.cam.ReadFrame()
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения кадра ReadFrame: %w", err)
@@ -138,8 +139,24 @@ func (c *LinuxCamera) ReadFrame() ([]byte, error) {
 		return nil, nil
 	}
 
-	// Конвертируем сырой YUYV поток в сжатый JPEG на лету
-	jpegBytes, err := convertYuyvToJpeg(rawYuyv, c.width, c.height)
+	// 2. Копируем данные кадра в локальную память Go, чтобы не держать буфер ядра
+	localYuyv := make([]byte, len(rawYuyv))
+	copy(localYuyv, rawYuyv)
+
+	// === Возвращаем буфер обратно видеокарте на хост ===
+	// Вызываем метод возврата кадра в очередь драйвера Linux.
+	// Это мгновенно освобождает кольцевой буфер V4L2 для записи следующего кадра!
+	// Если в вашей версии blackjack/webcam нет метода ReleaseFrame,
+	// проверьте её исходники на наличие аналогичной функции очистки очереди.
+	if r, ok := interface{}(c.cam).(interface{ ReleaseFrame() }); ok {
+		r.ReleaseFrame()
+	} else if r, ok := interface{}(c.cam).(interface{ Release() }); ok {
+		r.Release()
+	}
+	// =========================================================================
+
+	// 3. Конвертируем скопированный YUYV поток в сжатый JPEG на лету
+	jpegBytes, err := convertYuyvToJpeg(localYuyv, c.width, c.height)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка конвертации кадра YUYV->JPEG: %w", err)
 	}
