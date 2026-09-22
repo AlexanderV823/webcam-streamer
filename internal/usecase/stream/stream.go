@@ -127,6 +127,8 @@ func (u *Usecase) RemoveListener(ch chan []byte) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
-	delete(u.listeners, ch)
-	close(ch)
+	if _, exists := u.listeners[ch]; exists {
+		delete(u.listeners, ch)
+		close(ch)
+	}
 }
