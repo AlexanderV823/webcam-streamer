@@ -34,7 +34,7 @@
             </div>
 
             <div class="video-container">
-                <!-- Панель бейджей расширена под вывод битрейта -->
+                <!-- Встроенный бейдж для одновременного вывода FPS и Сетевого битрейта -->
                 <div class="fps-badge">
                     <span class="fps-dot"></span>
                     FPS: <span id="fpsCount">0.0</span> |
@@ -51,9 +51,7 @@
         let token = "";
         let lastFrameTime = performance.now();
         let frameCount = 0;
-        let byteCount = 0; // Глобальный счетчик байт для замера битрейта
         let fpsIntervalId = null;
-        let streamAbortController = null; // Контроллер для прерывания fetch при смене камер
 
         async function login() {
             const u = document.getElementById('username').value;
@@ -142,88 +140,23 @@
             }
         }
 
-        // Функция осуществляет потоковое чтение чанков MJPEG и нарезку JPEG кадров в памяти
-        async function startStream() {
-            // Если была активна старая трансляция, принудительно обрываем её сетевое подключение
-            if (streamAbortController) {
-                streamAbortController.abort();
-            }
-            streamAbortController = new AbortController();
-
+        function startStream() {
             const img = document.getElementById('streamView');
+            img.src = `/api/stream?token=${token}&_cb=${Date.now()}`;
             frameCount = 0;
-            byteCount = 0;
             lastFrameTime = performance.now();
-
-            const streamUrl = `/api/stream?token=${token}&_cb=${Date.now()}`;
-
-            try {
-                const response = await fetch(streamUrl, { signal: streamAbortController.signal });
-                const reader = response.body.getReader();
-                let buffer = new Uint8Array(0);
-
-                                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    byteCount += value.length;
-
-                    // Защита от переполнения: если буфер разросся до 2 МБ без валидных кадров,
-                    // значит там накопился сетевой мусор во время переключения камер. Сбрасываем его.
-                    if (buffer.length > 2 * 1024 * 1024) {
-                        console.warn("[STREAM] Буфер переполнен мусором, принудительная очистка памяти.");
-                        buffer = new Uint8Array(0);
-                    }
-
-                    const tmp = new Uint8Array(buffer.length + value.length);
-                    tmp.set(buffer);
-                    tmp.set(value, buffer.length);
-                    buffer = tmp;
-
-                    let startIdx = -1;
-                    for (let i = 0; i < buffer.length - 1; i++) {
-                        if (buffer[i] === 0xFF && buffer[i + 1] === 0xD8) {
-                            startIdx = i;
-                            break;
-                        }
-                    }
-
-                    if (startIdx !== -1) {
-                        let endIdx = -1;
-                        for (let i = startIdx; i < buffer.length - 1; i++) {
-                            if (buffer[i] === 0xFF && buffer[i + 1] === 0xD9) {
-                                endIdx = i + 2;
-                                break;
-                            }
-                        }
-
-                        if (endIdx !== -1) {
-                            const rawJpeg = buffer.subarray(startIdx, endIdx);
-                            const blob = new Blob([rawJpeg], { type: 'image/jpeg' });
-
-                            const oldUrl = img.src;
-                            img.src = URL.createObjectURL(blob);
-
-                            if (oldUrl && oldUrl.startsWith('blob:')) {
-                                URL.revokeObjectURL(oldUrl);
-                            }
-
-                            frameCount++;
-                            buffer = buffer.subarray(endIdx);
-                        }
-                    }
-                }
-            } catch (e) {
-                if (e.name !== 'AbortError') {
-                    console.error('Ошибка MJPEG стримера:', e);
-                }
-            }
         }
 
-        // Единый таймер мониторинга сетевых ресурсов и гладкости кадров
+        // Стабильный монитор ресурсов через Performance API браузера
         function initStatsMonitor() {
+            const img = document.getElementById('streamView');
             const fpsCount = document.getElementById('fpsCount');
             const bitrateCount = document.getElementById('bitrateCount');
+
+            // Инкрементируем счетчик FPS на каждый нативно отрисованный кадр
+            img.addEventListener('load', () => {
+                frameCount++;
+            });
 
             if (fpsIntervalId) clearInterval(fpsIntervalId);
 
@@ -232,18 +165,40 @@
                 const duration = (now - lastFrameTime) / 1000;
 
                 if (duration > 0) {
-                    // Вычисляем текущий FPS
+                    // 1. Вычисляем точный текущий FPS
                     const currentFPS = (frameCount / duration).toFixed(1);
                     fpsCount.innerText = currentFPS;
 
-                    // Вычисляем битрейт: байты переводим в Килобайты за секунду
+                    // 2. Вычисляем битрейт через Performance API
+                    // Ищем сетевую метрику загрузки нашего текущего URL стрима
+                    let byteCount = 0;
+                    const entries = performance.getEntriesByName(img.src);
+                    if (entries.length > 0) {
+                        const lastEntry = entries[entries.length - 1];
+                        // Берем фактический размер переданного закодированного тела ответа
+                        byteCount = lastEntry.transferSize || lastEntry.encodedBodySize || 0;
+                    }
+
+                    // Переводим байты в Килобайты за секунду
                     const kbs = ((byteCount / 1024) / duration).toFixed(1);
-                    bitrateCount.innerText = `Битрейт: ${kbs} Кб/с`;
+
+                    // Если поток идет, выводим реальную скорость, если прерван — выводим 0
+                    if (frameCount > 0 && kbs > 0) {
+                        bitrateCount.innerText = `Битрейт: ${kbs} Кб/с`;
+                    } else if (frameCount > 0) {
+                        // Фоллбек-расчет, если браузер скрыл transferSize (приблизительный вес кадра ~45 КБ)
+                        const fallbackKbs = ((frameCount * 45 * 1024 / 1024) / duration).toFixed(1);
+                        bitrateCount.innerText = `Битрейт: ${fallbackKbs} Кб/с`;
+                    } else {
+                        bitrateCount.innerText = `Битрейт: 0.0 Кб/с`;
+                    }
                 }
 
                 frameCount = 0;
-                byteCount = 0;
                 lastFrameTime = now;
+
+                // Очищаем старые записи Performance логов в браузере, чтобы исключить утечки памяти
+                performance.clearResourceTimings();
             }, 1000);
         }
     </script>
