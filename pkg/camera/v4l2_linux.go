@@ -34,7 +34,7 @@ func NewScanner() domain.CameraScanner {
 }
 
 // Scan считывает системную директорию /dev и sysfs в Linux для поиска всех подключенных USB-камер.
-// Она сопоставляет технические пути (например, /dev/video0) с их человекочитаемыми именами из ядра.
+// Включает универсальную фильтрацию: отсекает ноды метаданных, не поддерживающие видеозахват.
 func (s *LinuxScanner) Scan() ([]domain.DeviceInfo, error) {
 	var devices []domain.DeviceInfo
 	files, err := os.ReadDir("/dev")
@@ -46,6 +46,16 @@ func (s *LinuxScanner) Scan() ([]domain.DeviceInfo, error) {
 		name := file.Name()
 		if strings.HasPrefix(name, "video") && !strings.Contains(name, "-") {
 			devPath := "/dev/" + name
+
+			// Пытаемся сделать тестовое открытие ноды через blackjack/webcam.
+			// Если это нода метаданных, библиотека вернет ошибку ioctl, и мы её пропустим.
+			testCam, err := webcam.Open(devPath)
+			if err != nil {
+				// Нода не поддерживает видеопоток capture, игнорируем её
+				continue
+			}
+			testCam.Close() // Обязательно закрываем дескриптор сразу после теста!
+
 			friendlyName := "Универсальная USB-камера (" + name + ")"
 			sysNamePath := fmt.Sprintf("/sys/class/video4linux/%s/name", name)
 
