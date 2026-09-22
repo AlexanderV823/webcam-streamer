@@ -4,24 +4,22 @@ FROM golang:1.25-bookworm AS builder
 # Устанавливаем рабочую директорию внутри контейнера
 WORKDIR /app
 
-# Копируем зависимости
+# Шаг 1. Кэшируем зависимости (скачиваются заново только при изменении go.mod)
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Копируем весь исходный код проекта
+# Шаг 2. Копируем код и собираем (этот слой Docker всегда пересоберет, если изменился коммит)
 COPY . .
-
-# Включаем CGO_ENABLED=1 и собираем под нативный Debian Linux (glibc)
-ENV CGO_ENABLED=1
-ENV GOOS=linux
-ENV GOARCH=amd64
+ENV CGO_ENABLED=1 GOOS=linux GOARCH=amd64
 RUN go build -ldflags="-w -s" -o webcam-streamer cmd/server/main.go
+
 
 # === Этап 2: Финальный продакшн-контейнер ===
 # Используем Debian Slim вместо Alpine, чтобы glibc совпадал с хостом
 FROM debian:bookworm-slim
 
-# Устанавливаем сертификаты безопасности и часовые пояса
+# Шаг 3. Установка системных утилит.
+# Этот слой выполнится ровно ОДИН РАЗ при первой сборке и закэшируется Docker.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
@@ -29,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Копируем скомпилированное приложение
+# Шаг 4. Копируем бинарник (этот слой обновляется всегда)
 COPY --from=builder /app/webcam-streamer .
 
 # Точка запуска приложения при старте контейнера
