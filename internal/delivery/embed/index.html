@@ -162,20 +162,24 @@
                 const reader = response.body.getReader();
                 let buffer = new Uint8Array(0);
 
-                while (true) {
+                                while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
 
-                    // Аккумулируем вес входящего сетевого пакета
                     byteCount += value.length;
 
-                    // Объединяем накопленный остаток буфера с новыми данными из сети
+                    // Защита от переполнения: если буфер разросся до 2 МБ без валидных кадров,
+                    // значит там накопился сетевой мусор во время переключения камер. Сбрасываем его.
+                    if (buffer.length > 2 * 1024 * 1024) {
+                        console.warn("[STREAM] Буфер переполнен мусором, принудительная очистка памяти.");
+                        buffer = new Uint8Array(0);
+                    }
+
                     const tmp = new Uint8Array(buffer.length + value.length);
                     tmp.set(buffer);
                     tmp.set(value, buffer.length);
                     buffer = tmp;
 
-                    // Ищем границы валидного JPEG кадра: Начало (0xFF 0xD8) и Конец (0xFF 0xD9)
                     let startIdx = -1;
                     for (let i = 0; i < buffer.length - 1; i++) {
                         if (buffer[i] === 0xFF && buffer[i + 1] === 0xD8) {
@@ -188,12 +192,11 @@
                         let endIdx = -1;
                         for (let i = startIdx; i < buffer.length - 1; i++) {
                             if (buffer[i] === 0xFF && buffer[i + 1] === 0xD9) {
-                                endIdx = i + 2; // Берем маркер полностью
+                                endIdx = i + 2;
                                 break;
                             }
                         }
 
-                        // Если маркеры совпали — вырезаем JPEG и скармливаем тегу <img>
                         if (endIdx !== -1) {
                             const rawJpeg = buffer.subarray(startIdx, endIdx);
                             const blob = new Blob([rawJpeg], { type: 'image/jpeg' });
@@ -201,13 +204,11 @@
                             const oldUrl = img.src;
                             img.src = URL.createObjectURL(blob);
 
-                            // Очищаем кэш Blob в браузере для предотвращения утечки ОЗУ
                             if (oldUrl && oldUrl.startsWith('blob:')) {
                                 URL.revokeObjectURL(oldUrl);
                             }
 
                             frameCount++;
-                            // Отрезаем обработанный хвост буфера
                             buffer = buffer.subarray(endIdx);
                         }
                     }
