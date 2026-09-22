@@ -39,19 +39,30 @@ func (u *Usecase) StartBroadcast(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// 1. Безопасно извлекаем указатель на текущую активную камеру
 			u.mu.Lock()
-			frame, err := u.cam.ReadFrame()
+			activeCam := u.cam
 			u.mu.Unlock()
 
+			// Если камера в данный момент закрыта или переключается — пропускаем итерацию
+			if activeCam == nil {
+				continue
+			}
+
+			// 2. ВАЖНО: Читаем кадр БЕЗ блокировки u.mu.Lock().
+			// Теперь медленные системные вызовы WaitForFrame не тормозят UseCase!
+			frame, err := activeCam.ReadFrame()
 			if err != nil || len(frame) == 0 {
 				continue
 			}
 
+			// 3. Быстро блокируем мьютекс только для рассылки по карте каналов
 			u.mu.Lock()
 			for ch := range u.listeners {
 				select {
 				case ch <- frame:
 				default:
+					// Пропускаем медленных клиентов (drop frame)
 				}
 			}
 			u.mu.Unlock()
@@ -59,26 +70,40 @@ func (u *Usecase) StartBroadcast(ctx context.Context) {
 	}
 }
 
-// SwitchCamera безопасно переключает источник видеопотока на лету (исправляет ошибку в handlers.go)
+// SwitchCamera безопасно переключает источник видеопотока на лету
 func (u *Usecase) SwitchCamera(newPath string) error {
 	u.mu.Lock()
-	defer u.mu.Unlock()
-
 	if u.currentID == newPath {
+		u.mu.Unlock()
 		return nil
 	}
 
 	log.Printf("[STREAM] Переключение камеры с %s на %s", u.currentID, newPath)
 
-	// Закрываем дескриптор старой камеры
-	u.cam.Close()
+	// Запоминаем ссылку на старое устройство и временно зануляем u.cam,
+	// чтобы горутина StartBroadcast временно пропускала итерации захвата
+	oldCam := u.cam
+	u.cam = nil
+	u.mu.Unlock()
+
+	// Закрываем дескриптор старой камеры вне мьютекса
+	if oldCam != nil {
+		oldCam.Close()
+	}
 
 	// Инициализируем новое устройство
-	if err := u.cam.Init(newPath); err != nil {
+	if err := oldCam.Init(newPath); err != nil {
+		// В случае ошибки возвращаем старую камеру на место
+		u.mu.Lock()
+		u.cam = oldCam
+		u.mu.Unlock()
 		return err
 	}
 
+	u.mu.Lock()
+	u.cam = oldCam
 	u.currentID = newPath
+	u.mu.Unlock()
 	return nil
 }
 
