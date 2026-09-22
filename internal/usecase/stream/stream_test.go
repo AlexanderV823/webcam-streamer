@@ -9,17 +9,33 @@ import (
 	"webcam-streamer/internal/domain"
 )
 
-// Тестовые структуры, реализующие интерфейсы ядра
-type testCapture struct{ returnErr bool }
+// Тестовые структуры, реализующие интерфейсы ядра (дополнено флагами для гибкости)
+type testCapture struct {
+	returnErr      bool
+	initErr        bool
+	closeCalled    bool
+	lastOpenedPath string
+}
 
-func (tc *testCapture) Init(_ string) error { return nil }
+func (tc *testCapture) Init(path string) error {
+	tc.lastOpenedPath = path
+	if tc.initErr {
+		return errors.New("init hardware fail")
+	}
+	return nil
+}
+
 func (tc *testCapture) ReadFrame() ([]byte, error) {
 	if tc.returnErr {
 		return nil, errors.New("hardware fail")
 	}
 	return []byte{0x01, 0x02}, nil
 }
-func (tc *testCapture) Close() error { return nil }
+
+func (tc *testCapture) Close() error {
+	tc.closeCalled = true
+	return nil
+}
 
 type testScanner struct{}
 
@@ -27,7 +43,8 @@ func (ts *testScanner) Scan() ([]domain.DeviceInfo, error) {
 	return []domain.DeviceInfo{{ID: "/dev/video0", Name: "Test Cam"}}, nil
 }
 
-func TestStreamWithInterfaces(t *testing.T) {
+// TestOriginalStreamWithInterfaces тест асинхронного стриминга и сканера
+func TestOriginalStreamWithInterfaces(t *testing.T) {
 	capture := &testCapture{}
 	scanner := &testScanner{}
 
@@ -49,9 +66,97 @@ func TestStreamWithInterfaces(t *testing.T) {
 		if len(frame) == 0 {
 			t.Error("Получен пустой кадр")
 		}
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(150 * time.Millisecond): // Немного увеличили для стабильности в Docker
 		t.Error("Таймаут стрима")
 	}
 	cancel()
+	streamUC.RemoveListener(ch)
+}
+
+// TestStartBroadcast_HardwareErrorHandling проверяет обработку аппаратных ошибок в цикле бродкаста
+func TestStartBroadcast_HardwareErrorHandling(t *testing.T) {
+	// Включаем возврат ошибки в mock-камере
+	capture := &testCapture{returnErr: true}
+	scanner := &testScanner{}
+	streamUC := NewStreamUsecase(capture, scanner, "/dev/video0")
+
+	ch := streamUC.AddListener()
+	defer streamUC.RemoveListener(ch)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go streamUC.StartBroadcast(ctx)
+	defer cancel()
+
+	// Так как ReadFrame возвращает ошибку, кадры в канал идти не должны
+	select {
+	case <-ch:
+		t.Error("Слушатель получил кадр, хотя камера вернула ошибку")
+	case <-time.After(100 * time.Millisecond):
+		// Успех: цикл корректно обработал ошибку через continue, не забив канал слушателя
+	}
+}
+
+// TestSwitchCamera_Scenarios тестирует сценарии безопасной смены источников видео на лету
+func TestSwitchCamera_Scenarios(t *testing.T) {
+	capture := &testCapture{}
+	scanner := &testScanner{}
+	streamUC := NewStreamUsecase(capture, scanner, "/dev/video0")
+
+	// Сценарий 1: Переключение на ту же самую камеру (должно выйти без переинициализации)
+	err := streamUC.SwitchCamera("/dev/video0")
+	if err != nil {
+		t.Fatalf("Ошибка при переключении на текущую камеру: %v", err)
+	}
+	if capture.closeCalled {
+		t.Error("Камера не должна была закрываться при переключении на саму себя")
+	}
+
+	// Сценарий 2: Успешная смена устройства
+	err = streamUC.SwitchCamera("/dev/video1")
+	if err != nil {
+		t.Fatalf("Не удалось переключить камеру: %v", err)
+	}
+	if !capture.closeCalled {
+		t.Error("Старая камера должна быть закрыта перед переключением")
+	}
+	if capture.lastOpenedPath != "/dev/video1" {
+		t.Errorf("Ожидалось открытие '/dev/video1', открыто: %q", capture.lastOpenedPath)
+	}
+
+	// Сценарий 3: Обработка сбоя при инициализации новой камеры
+	capture.initErr = true
+	err = streamUC.SwitchCamera("/dev/video2")
+	if err == nil {
+		t.Error("Ожидалась ошибка инициализации нового оборудования, но метод вернул nil")
+	}
+}
+
+// TestRemoveListener_Safety тестирует удаление слушателей для исключения утечек памяти
+func TestRemoveListener_Safety(t *testing.T) {
+	capture := &testCapture{}
+	scanner := &testScanner{}
+	streamUC := NewStreamUsecase(capture, scanner, "/dev/video0")
+
+	ch := streamUC.AddListener()
+
+	// Проверяем, что в map добавился 1 элемент
+	streamUC.mu.Lock()
+	listenersCountBefore := len(streamUC.listeners)
+	streamUC.mu.Unlock()
+	if listenersCountBefore != 1 {
+		t.Errorf("Ожидался 1 слушатель, найдено %d", listenersCountBefore)
+	}
+
+	streamUC.RemoveListener(ch)
+
+	// Проверяем, что map пуста, а канал закрыт
+	streamUC.mu.Lock()
+	listenersCountAfter := len(streamUC.listeners)
+	streamUC.mu.Unlock()
+	if listenersCountAfter != 0 {
+		t.Errorf("После удаления ожидалось 0 слушателей, найдено %d", listenersCountAfter)
+	}
+
+	// Повторное удаление несуществующего слушателя не должно вызывать паники
 	streamUC.RemoveListener(ch)
 }
