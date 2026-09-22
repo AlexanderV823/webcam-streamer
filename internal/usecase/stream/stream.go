@@ -49,10 +49,11 @@ func (u *Usecase) StartBroadcast(ctx context.Context) {
 				continue
 			}
 
-			// 2. ВАЖНО: Читаем кадр БЕЗ блокировки u.mu.Lock().
-			// Теперь медленные системные вызовы WaitForFrame не тормозят UseCase!
+			// Вызов ReadFrame больше не вызывает панику, так как защищен nil-проверкой внутри драйвера
 			frame, err := activeCam.ReadFrame()
 			if err != nil || len(frame) == 0 {
+				// Если камера вернула ошибку из-за того, что её закрыли в параллельном потоке,
+				// мы просто пропускаем итерацию, не обрушивая весь процесс приложения
 				continue
 			}
 
