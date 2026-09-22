@@ -10,111 +10,20 @@ import (
 	"image/jpeg"
 	"os"
 	"strings"
-	"unsafe"
 
-	"golang.org/x/sys/unix"
+	"github.com/blackjack/webcam"
 	"webcam-streamer/internal/domain"
-)
-
-const (
-	// v4l2BufferTypeVideoCapture указывает ядру, что буфер используется для захвата видеопотока
-	v4l2BufferTypeVideoCapture = 1
-	// v4l2MemoryMmap задает режим потокового обмена через проецирование памяти ядра (Memory Mapping)
-	v4l2MemoryMmap = 1
-	// vidiocSFmt (Set Format) устанавливает геометрию кадра (разрешение) и кодек (FourCC код) в драйвере
-	vidiocSFmt = 0xc0e85605
-	// vidiocReqBufs (Request Buffers) запрашивает у ядра выделение определенного количества буферов под кадры
-	vidiocReqBufs = 0xc0145608
-	// vidiocQueryBuf запрашивает параметры буфера (размер и смещение в памяти ядра) для последующего mmap
-	vidiocQueryBuf = 0xc0445609
-	// vidiocQBuf (Queue Buffer) отправляет пустой буфер в очередь ядра, разрешая камере записывать туда новый кадр
-	vidiocQBuf = 0xc044560f
-	// vidiocDQBuf (Dequeue Buffer) извлекает из очереди ядра буфер, который уже заполнен свежими данными кадра
-	vidiocDQBuf = 0xc0445611
-	// vidiocStreamOn запускает генерацию видеопотока и захват кадров на физическом сенсоре камеры
-	vidiocStreamOn = 0x4004564a
-	// vidiocStreamOff останавливает генерацию видеопотока на камере
-	vidiocStreamOff = 0x4004564b
-	// Указываем ядру режим обмена через Read/Write дескрипторы
-	v4l2MemoryReadwrite = 1
-	// vidiocGFmt - команда чтения формата ядра Linux (Get Format)
-	vidiocGFmt = 0xc0e85604
 )
 
 // LinuxScanner реализует интерфейс domain.CameraScanner для операционной системы Linux.
 type LinuxScanner struct{}
 
-// LocalBuffer хранит ссылку на область памяти, спроецированную из ядра
-type LocalBuffer struct {
-	Slice []byte
-}
-
 type LinuxCamera struct {
-	file    *os.File
-	buffers []LocalBuffer
-	width   int
-	height  int
+	cam    *webcam.Webcam
+	width  int
+	height int
 }
 
-// Структура v4l2_requestbuffers для запроса буферов у ядра
-type v4l2RequestBuffers struct {
-	Count    uint32
-	Type     uint32
-	Memory   uint32
-	Reserved [2]uint32
-}
-
-// Структура v4l2_timecode для использования внутри v4l2_buffer
-type v4l2Timecode struct {
-	Type     uint32
-	Flags    uint32
-	Frames   uint8
-	Seconds  uint8
-	Minutes  uint8
-	Hours    uint8
-	Userbits [4]uint8
-}
-
-// Структура v4l2_buffer для постановки/снятия кадров из очереди (QBUF/DQBUF)
-type v4l2Buffer struct {
-	Index     uint32
-	Type      uint32
-	BytesUsed uint32
-	Flags     uint32
-	Field     uint32
-	Timestamp unix.Timeval
-	Timecode  v4l2Timecode
-	Sequence  uint32
-	Memory    uint32
-	Offset    uint32 // Union: в режиме MMAP здесь лежит смещение буфера
-	Length    uint32
-	Reserved2 uint32
-	Reserved  uint32
-}
-
-type v4l2PixFormat struct {
-	Width        uint32
-	Height       uint32
-	Pixelformat  uint32
-	Field        uint32
-	BytesPerLine uint32
-	SizeImage    uint32
-	Colorspace   uint32
-	Priv         uint32
-	Flags        uint32
-	Enc          uint32
-	Quant        uint32
-	XferFunc     uint32
-}
-
-// v4l2Format объединяет тип буфера и параметры формата пикселей
-type v4l2Format struct {
-	Type uint32
-	fmt  v4l2PixFormat
-	pad  [200 - unsafe.Sizeof(v4l2PixFormat{})]byte
-}
-
-// NewCamera инициализирует и возвращает Linux-реализацию интерфейса захвата видео.
 func NewCamera() domain.VideoCapture {
 	return &LinuxCamera{}
 }
@@ -153,7 +62,7 @@ func (s *LinuxScanner) Scan() ([]domain.DeviceInfo, error) {
 	return devices, nil
 }
 
-// Init открывает устройство, настраивает формат, запрашивает MMAP буферы и запускает стрим
+// Init открывает камеру и настраивает формат YUYV через официальную библиотеку blackjack/webcam
 func (c *LinuxCamera) Init(path string) error {
 	// Создаем список нод для проверки. Если упала /dev/video0, приложение автоматически проверит /dev/video1
 	nodesToTry := []string{path}
@@ -163,227 +72,117 @@ func (c *LinuxCamera) Init(path string) error {
 		nodesToTry = append(nodesToTry, "/dev/video0")
 	}
 
-	var fd int
+	var cam *webcam.Webcam
 	var err error
 	var activePath string
-	var sysErr unix.Errno
-	var f v4l2Format
 
-	// Цикл автоматического перебора нод видеозахвата
+	// Автоматический перебор нод
 	for _, node := range nodesToTry {
-		fmt.Printf("[INIT] Попытка инициализации ноды устройства: %s...\n", node)
-		fd, err = unix.Open(node, unix.O_RDWR, 0)
-		if err != nil {
-			fmt.Printf("[WARN] Не удалось открыть файл устройства %s: %v\n", node, err)
-			continue
-		}
-		c.file = os.NewFile(uintptr(fd), node)
-		activePath = node
-
-		// Сбрасываем и подготавливаем структуру формата под YUYV
-		f = v4l2Format{}
-		f.Type = v4l2BufferTypeVideoCapture
-		var yuyvFourCC uint32 = uint32('Y') | uint32('U')<<8 | uint32('Y')<<16 | uint32('V')<<24
-		c.width = 640
-		c.height = 480
-
-		f.fmt.Width = uint32(c.width)
-		f.fmt.Height = uint32(c.height)
-		f.fmt.Pixelformat = yuyvFourCC
-		f.fmt.Field = 1 // V4L2_FIELD_NONE
-
-		// === ДОБАВЛЯЕМ КРИТИЧЕСКИЕ ПАРАМЕТРЫ ДЛЯ YUYV ===
-		f.fmt.BytesPerLine = uint32(c.width * 2)       // 640 пикселей * 2 байта = 1280 байт на строку
-		f.fmt.SizeImage = uint32(c.width * c.height * 2) // Полный размер кадра = 614400 байт
-		f.fmt.Colorspace = 1                             // V4L2_COLORSPACE_SRGB (дефолтное цветовое пространство)
-		// ===============================================
-
-		// Проверяем, принимает ли драйвер на этой ноде ioctl установки формата
-		_, _, sysErr = unix.Syscall6(
-			unix.SYS_IOCTL,
-			c.file.Fd(),
-			uintptr(vidiocSFmt),
-			uintptr(unsafe.Pointer(&f)),
-			0, 0, 0,
-		)
-
-		if sysErr == 0 {
-			fmt.Printf("[SUCCESS] Найдена рабочая видео-нода: %s! Переходим к выделению буферов.\n", node)
+		fmt.Printf("[INIT] Открытие камеры %s через blackjack/webcam...\n", node)
+		cam, err = webcam.Open(node)
+		if err == nil {
+			activePath = node
 			break
 		}
-
-		// Если нода не подошла, закрываем дескриптор и пробуем следующую
-		fmt.Printf("[WARN] Нода %s отклонила формат YUYV (ioctl error: %v). Пробуем альтернативу...\n", node, sysErr)
-		c.file.Close()
-		c.file = nil
+		fmt.Printf("[WARN] Не удалось открыть ноду %s: %v\n", node, err)
 	}
 
-	// Если ни одна из нод не ответила успехом на ioctl
-	if c.file == nil {
-		return fmt.Errorf("все доступные ноды камер (%v) отклонили формат YUYV (последняя ошибка: %v)", nodesToTry, sysErr)
+	if cam == nil {
+		return fmt.Errorf("не удалось инициализировать ни одну из нод камер %v", nodesToTry)
 	}
 
-	// 2. Запрос буферов (REQBUFS) у ядра Linux (используем уже успешно открытый c.file)
-	var reqBufs v4l2RequestBuffers
-	reqBufs.Count = 4
-	reqBufs.Type = v4l2BufferTypeVideoCapture
-	reqBufs.Memory = v4l2MemoryMmap
+	c.cam = cam
+	c.width = 640
+	c.height = 480
 
-	_, _, sysErr = unix.Syscall6(unix.SYS_IOCTL, c.file.Fd(), uintptr(vidiocReqBufs), uintptr(unsafe.Pointer(&reqBufs)), 0, 0, 0)
-	if sysErr != 0 {
+	// Устанавливаем формат YUYV (FourCC код для YUYV в библиотеке blackjack/webcam)
+	// Функция сама под капотом выполнит правильный ioctl с нужным выравниванием памяти!
+	pixelFormat := webcam.PixelFormat(uint32('Y') | uint32('U')<<8 | uint32('Y')<<16 | uint32('V')<<24)
+	_, _, _, err = c.cam.SetImageFormat(pixelFormat, uint32(c.width), uint32(c.height))
+	if err != nil {
 		c.Close()
-		return fmt.Errorf("ошибка ioctl VIDIOC_REQBUFS на устройстве %s: %v", activePath, sysErr)
+		return fmt.Errorf("драйвер камеры отклонил формат YUYV: %w", err)
 	}
 
-	c.buffers = make([]LocalBuffer, reqBufs.Count)
-
-	// 3. Проекция памяти ядра в Go (QUERYBUF + MMAP)
-	for i := uint32(0); i < reqBufs.Count; i++ {
-		var buf v4l2Buffer
-		buf.Index = i
-		buf.Type = v4l2BufferTypeVideoCapture
-		buf.Memory = v4l2MemoryMmap
-
-		_, _, sysErr = unix.Syscall6(unix.SYS_IOCTL, c.file.Fd(), uintptr(vidiocQueryBuf), uintptr(unsafe.Pointer(&buf)), 0, 0, 0)
-		if sysErr != 0 {
-			c.Close()
-			return fmt.Errorf("ошибка ioctl VIDIOC_QUERYBUF для буфера %d: %v", i, sysErr)
-		}
-
-		// Вызываем системный mmap
-		mmapSlice, err := unix.Mmap(int(c.file.Fd()), int64(buf.Offset), int(buf.Length), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
-		if err != nil {
-			c.Close()
-			return fmt.Errorf("ошибка mmap для буфера %d: %w", i, err)
-		}
-		c.buffers[i] = LocalBuffer{Slice: mmapSlice}
-
-		_, _, sysErr = unix.Syscall6(unix.SYS_IOCTL, c.file.Fd(), uintptr(vidiocQBuf), uintptr(unsafe.Pointer(&buf)), 0, 0, 0)
-		if sysErr != 0 {
-			c.Close()
-			return fmt.Errorf("ошибка ioctl VIDIOC_QBUF для буфера %d: %v", i, sysErr)
-		}
-	}
-
-	// 4. Запуск трансляции в ядре (STREAMON)
-	var bufType uint32 = v4l2BufferTypeVideoCapture
-	_, _, sysErr = unix.Syscall6(unix.SYS_IOCTL, c.file.Fd(), uintptr(vidiocStreamOn), uintptr(unsafe.Pointer(&bufType)), 0, 0, 0)
-	if sysErr != 0 && sysErr != unix.EBUSY {
+	// Запускаем трансляцию потока (STREAMON)
+	err = c.cam.StartStreaming()
+	if err != nil {
 		c.Close()
-		return fmt.Errorf("ошибка ioctl VIDIOC_STREAMON: %v", sysErr)
+		return fmt.Errorf("ошибка запуска потока StartStreaming: %w", err)
 	}
 
-	// Переводим дескриптор в неблокирующий режим для стабильного чтения кадров
-	flags, err := unix.FcntlInt(c.file.Fd(), unix.F_GETFL, 0)
-	if err == nil {
-		_, _ = unix.FcntlInt(c.file.Fd(), unix.F_SETFL, flags|unix.O_NONBLOCK)
-	}
-
-	fmt.Printf("[SUCCESS] Драйвер V4L2 успешно инициализировал трансляцию на устройстве %s!\n", activePath)
+	fmt.Printf("[SUCCESS] Драйвер blackjack/webcam успешно запустил камеру на %s!\n", activePath)
 	return nil
 }
 
-// ReadFrame забирает готовый кадр из очереди ядра, конвертирует YUYV в JPEG и возвращает буфер обратно
+// ReadFrame забирает готовый кадр из библиотеки, конвертирует YUYV в JPEG и возвращает буфер
 func (c *LinuxCamera) ReadFrame() ([]byte, error) {
-	if c.file == nil || len(c.buffers) == 0 {
+	if c.cam == nil {
 		return nil, fmt.Errorf("камера не инициализирована")
 	}
 
-	// 1. Извлекаем заполненный буфер из очереди ядра (DQBUF)
-	var buf v4l2Buffer
-	buf.Type = v4l2BufferTypeVideoCapture
-	buf.Memory = v4l2MemoryMmap
-
-	_, _, sysErr := unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocDQBuf, uintptr(unsafe.Pointer(&buf)))
-	if sysErr != 0 {
-		// Если кадр еще не подготовлен сенсором камеры (EAGAIN), возвращаем пустой результат без ошибки
-		if sysErr == unix.EAGAIN {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("ошибка ioctl VIDIOC_DQBUF: %v", sysErr)
+	// Ожидаем готовности кадра от ядра (блокирующий вызов)
+	err := c.cam.WaitForFrame(1) // таймаут 1 секунда
+	if err != nil {
+		// Если кадр еще не готов, возвращаем nil без ошибки (аналог EAGAIN)
+		return nil, nil
 	}
 
-	// Безопасно извлекаем индекс буфера, который заполнило ядро
-	if buf.Index >= uint32(len(c.buffers)) {
-		return nil, fmt.Errorf("некорректный индекс буфера от ядра: %d", buf.Index)
+	// Читаем сырые байты YUYV из памяти ядра
+	rawYuyv, err := c.cam.ReadFrame()
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения кадра ReadFrame: %w", err)
 	}
 
-	// Извлекаем сырые YUYV байты
-	rawYuyv := c.buffers[buf.Index].Slice[:buf.BytesUsed]
+	if len(rawYuyv) == 0 {
+		return nil, nil
+	}
 
 	// Конвертируем сырой YUYV поток в сжатый JPEG на лету
 	jpegBytes, err := convertYuyvToJpeg(rawYuyv, c.width, c.height)
 	if err != nil {
-		// Возвращаем буфер обратно ядру даже в случае ошибки конвертации (исправлен возврат до 3 значений)
-		_, _, _ = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocQBuf, uintptr(unsafe.Pointer(&buf)))
 		return nil, fmt.Errorf("ошибка конвертации кадра YUYV->JPEG: %w", err)
-	}
-
-	// Возвращаем буфер обратно в очередь ядра (исправлено с 2 переменных до 3)
-	_, _, sysErr = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocQBuf, uintptr(unsafe.Pointer(&buf)))
-	if sysErr != 0 {
-		return nil, fmt.Errorf("ошибка ioctl VIDIOC_QBUF при возврате буфера: %v", sysErr)
 	}
 
 	return jpegBytes, nil
 }
 
-// Close останавливает поток в ядре, делает Munmap для всех буферов и закрывает дескриптор файла
+// Close корректно останавливает стрим и освобождает память
 func (c *LinuxCamera) Close() error {
-	if c.file == nil {
+	if c.cam == nil {
 		return nil
 	}
-
-	// 1. Останавливаем поток в ядре (STREAMOFF)
-	var bufType uint32 = v4l2BufferTypeVideoCapture
-	_, _, _ = unix.Syscall(unix.SYS_IOCTL, c.file.Fd(), vidiocStreamOff, uintptr(unsafe.Pointer(&bufType)))
-
-	// 2. Освобождаем промаппированную память (Munmap)
-	for _, buf := range c.buffers {
-		if buf.Slice != nil {
-			_ = unix.Munmap(buf.Slice)
-		}
-	}
-	c.buffers = nil
-
-	// 3. Закрываем файл устройства
-	err := c.file.Close()
-	c.file = nil
+	_ = c.cam.StopStreaming()
+	err := c.cam.Close()
+	c.cam = nil
 	return err
 }
 
-// convertYuyvToJpeg распаковывает YUYV макропикселей в RGB и сжатия в JPEG
+// Вспомогательная функция распаковки YUYV макропикселей в RGBA и сжатия в JPEG
 func convertYuyvToJpeg(yuyv []byte, width, height int) ([]byte, error) {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-
-	// В YUYV каждые 4 байта кодируют 2 пикселя: [Y0, U, Y1, V]
-	// Y0 - яркость пикселя 1, Y1 - яркость пикселя 2. U и V - общие цветовые компоненты
 	bounds := len(yuyv) - 3
 	idx := 0
 
 	for i := 0; i < bounds && idx < width*height; i += 4 {
 		y0 := float64(yuyv[i])
-		u := float64(yuyv[i+1]) - 128
+		u  := float64(yuyv[i+1]) - 128
 		y1 := float64(yuyv[i+2]) - 128
-		v := float64(yuyv[i+3]) - 128
+		v  := float64(yuyv[i+3]) - 128
 
-		// Пиксель 1
 		r0 := y0 + 1.402*v
 		g0 := y0 - 0.344136*u - 0.714136*v
 		b0 := y0 + 1.772*u
 
-		// Пиксель 2
 		r1 := y1 + 1.402*v
 		g1 := y1 - 0.344136*u - 0.714136*v
 		b1 := y1 + 1.772*u
 
-		// Записываем Пиксель 1 в сетку RGBA
 		x0 := idx % width
 		ptY0 := idx / width
 		img.Set(x0, ptY0, color.RGBA{uint8(clamp(r0)), uint8(clamp(g0)), uint8(clamp(b0)), 255})
 		idx++
 
-		// Записываем Пиксель 2 в сетку RGBA
 		x1 := idx % width
 		ptY1 := idx / width
 		img.Set(x1, ptY1, color.RGBA{uint8(clamp(r1)), uint8(clamp(g1)), uint8(clamp(b1)), 255})
@@ -391,7 +190,6 @@ func convertYuyvToJpeg(yuyv []byte, width, height int) ([]byte, error) {
 	}
 
 	var buf bytes.Buffer
-	// Сжимаем RGBA в JPEG с качеством 80% (оптимально для баланса нагрузка/качество)
 	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80}); err != nil {
 		return nil, err
 	}
@@ -399,11 +197,7 @@ func convertYuyvToJpeg(yuyv []byte, width, height int) ([]byte, error) {
 }
 
 func clamp(v float64) float64 {
-	if v < 0 {
-		return 0
-	}
-	if v > 255 {
-		return 255
-	}
+	if v < 0 { return 0 }
+	if v > 255 { return 255 }
 	return v
 }
