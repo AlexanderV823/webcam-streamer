@@ -183,9 +183,9 @@ func convertYuyvToJpeg(yuyv []byte, width, height int) ([]byte, error) {
 
 	for i := 0; i < bounds && idx < width*height; i += 4 {
 		y0 := float64(yuyv[i])
-		u  := float64(yuyv[i+1]) - 128
+		u := float64(yuyv[i+1]) - 128
 		y1 := float64(yuyv[i+2]) - 128
-		v  := float64(yuyv[i+3]) - 128
+		v := float64(yuyv[i+3]) - 128
 
 		r0 := y0 + 1.402*v
 		g0 := y0 - 0.344136*u - 0.714136*v
@@ -214,7 +214,11 @@ func convertYuyvToJpeg(yuyv []byte, width, height int) ([]byte, error) {
 }
 
 func clamp(v float64) float64 {
-	if v < 0 { return 0 }
-	if v > 255 { return 255 }
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
 	return v
 }
