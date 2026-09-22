@@ -9,7 +9,7 @@ import (
 	"webcam-streamer/internal/domain"
 )
 
-// Тестовые структуры, реализующие интерфейсы ядра (дополнено флагами для гибкости)
+// testCapture реализует domain.VideoCapture для использования в HTTP-тестах
 type testCapture struct {
 	returnErr      bool
 	initErr        bool
@@ -43,7 +43,7 @@ func (ts *testScanner) Scan() ([]domain.DeviceInfo, error) {
 	return []domain.DeviceInfo{{ID: "/dev/video0", Name: "Test Cam"}}, nil
 }
 
-// TestOriginalStreamWithInterfaces тест асинхронного стриминга и сканера
+// TestOriginalStreamWithInterfaces проверяет асинхронный стриминг и сканер устройств через интерфейсы
 func TestOriginalStreamWithInterfaces(t *testing.T) {
 	capture := &testCapture{}
 	scanner := &testScanner{}
@@ -66,7 +66,7 @@ func TestOriginalStreamWithInterfaces(t *testing.T) {
 		if len(frame) == 0 {
 			t.Error("Получен пустой кадр")
 		}
-	case <-time.After(150 * time.Millisecond): // Немного увеличили для стабильности в Docker
+	case <-time.After(150 * time.Millisecond): // Стабильный таймаут для Docker-контейнеров
 		t.Error("Таймаут стрима")
 	}
 	cancel()
@@ -123,11 +123,16 @@ func TestSwitchCamera_Scenarios(t *testing.T) {
 		t.Errorf("Ожидалось открытие '/dev/video1', открыто: %q", capture.lastOpenedPath)
 	}
 
-	// Сценарий 3: Обработка сбоя при инициализации новой камеры
-	capture.initErr = true
+	// Сценарий 3: Обработка сбоя при инициализации новой камеры и принудительный откат на старую
+	capture.initErr = true // Провоцируем ошибку Init при следующем переключении
 	err = streamUC.SwitchCamera("/dev/video2")
 	if err == nil {
-		t.Error("Ожидалась ошибка инициализации нового оборудования, но метод вернул nil")
+		t.Error("Ожидалась ошибка инициализации оборудования, но метод вернул nil")
+	}
+
+	// Верифицируем, что UseCase успешно откатил и восстановил камеру на место после сбоя
+	if streamUC.cam == nil {
+		t.Error("После сбоя инициализации исходная камера должна была откатиться назад, но осталась nil")
 	}
 }
 
@@ -159,4 +164,20 @@ func TestRemoveListener_Safety(t *testing.T) {
 
 	// Повторное удаление несуществующего слушателя не должно вызывать паники
 	streamUC.RemoveListener(ch)
+}
+
+// TestStartBroadcast_NilCameraSkip проверяет пропуск итерации бродкаста, если камера временно nil
+func TestStartBroadcast_NilCameraSkip(t *testing.T) {
+	scanner := &testScanner{}
+	// Инициализируем UseCase БЕЗ камеры (nil)
+	streamUC := NewStreamUsecase(nil, scanner, "/dev/video0")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Запуск не должен вызывать паники (nil pointer дедлок устранен)
+	go streamUC.StartBroadcast(ctx)
+
+	// Даем горутине прокрутиться несколько циклов мимо ветки activeCam == nil
+	time.Sleep(40 * time.Millisecond)
 }
