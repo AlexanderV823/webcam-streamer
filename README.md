@@ -179,6 +179,12 @@ GOTOOLCHAIN=local go test -vet=off -cover ./...
 curl -sSLO https://raw.githubusercontent.com/AlexanderV823/webcam-streamer/main/deploy.sh && chmod +x deploy.sh && ./deploy.sh
 ```
 
+Полная очистка сервера:
+
+```bash
+cd /opt/ && sudo rm -rf ./webcam-streamer && cd ~ && rm -f deploy.sh
+```
+
 ### 📊 Управление и мониторинг
 *   Благодаря правилу `restart: always` в Docker Compose, контейнеры **автоматически запускаются при старте операционной системы** сервера.
 *   При каждом новом деплое скрипт автоматически производит очистку системы (`docker image prune -f`), удаляя старые образы-сироты (`<none>`) и освобождая дисковое пространство.
